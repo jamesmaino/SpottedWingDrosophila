@@ -19,7 +19,7 @@ These packages take care of loading and plotting data, and handling sci units an
 ```julia; results=hidden
 using GrowthMaps, Plots, Unitful, UnitfulRecipes, Dates
 using Unitful: °C, K, cal, mol
-basedir = joinpath(dirname(Base.pathof(GrowthMaps)), "../docs")
+basedir = ""
 ```
 
 
@@ -92,8 +92,8 @@ Instead we will download and unzip some lower ress monthly SMAP data to use in t
 
 ```julia; results=hidden
 dataurl = "https://media.githubusercontent.com/media/cesaraustralia/GrowthMaps.jl/data/SMAP_aggregated27km.zip"
-zipfilepath = joinpath(basedir, "SMAP_aggregated27km.zip")
-unzippedfolder = joinpath(basedir, "SMAP_aggregated27km")
+zipfilepath = joinpath(basedir, data, "SMAP_aggregated27km.zip")
+unzippedfolder = joinpath(basedir, data, "SMAP_aggregated27km")
 isfile(zipfilepath) || download(dataurl, zipfilepath)
 run(`unzip -o $zipfilepath -d $unzippedfolder`)
 ```
@@ -179,7 +179,7 @@ from a CSV file, and scatter them on the map:
 ```julia; results=hiddeats
 using CSV
 csvurl = "https://raw.githubusercontent.com/cesaraustralia/GrowthMaps.jl/data/"
-csvfilename = joinpath("occurrence.csv")
+csvfilename = joinpath(basedir, "data/occurrence.csv")
 isfile(csvfilename) || download(joinpath(csvurl, csvfilename))
 obs = CSV.File(csvfilename)
 occurrence = collect(zip(obs.X, obs.Y))
@@ -256,7 +256,7 @@ This is ready to use for projecting growthrates, or in a dispersal
 simulation using Dispersal.jl. Lets save it as a NetCDF file:
 
 ```julia; results=hidden
-savepath = joinpath("growthrates.ncd")
+savepath = joinpath(basedir, "data/growthrates.ncd")
 write(savepath, NCDarray, output)
 ```
 

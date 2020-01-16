@@ -55,7 +55,7 @@ just download the output saved in the example:
 ```{julia; eval=false}
 dataurl = "https://media.githubusercontent.com/media/cesaraustralia/Dispersal.jl/data"
 growthratesfilename = "growthrates.ncd"
-growthratesfilepath = joinpath(basedir, growthratesfilename)
+growthratesfilepath = joinpath(basedir, "data", growthratesfilename)
 isfile(growthratesfilepath) || download(joinpath(dataurl, growthratesfilename), joinpath(basedir, growthratesfilename))
 ```
 
