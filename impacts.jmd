@@ -1,0 +1,67 @@
+In this script we will estimate the cost to industry of a Fall Armyworm
+incursion, using cesars private Biosecurity.jl package.
+
+```julia; results=hidden
+using Biosecurity, GeoData, ArchGDAL, Setfield, Plots
+```
+
+
+Set up the initialisation arrays:
+
+```julia; results=hidden
+multiinit = (population=init, cost=zero(init))
+```
+
+Set up the `fallarmyworm` in the dispersal.jmd script.
+
+Then set up the costs ruleset. First we load the crop value
+array and clean it up for the simulation.
+
+```julia; results=hidden
+cropvaluepath = "data/clum_crop_value_cea.tif"
+cropvalue = GDALarray(cropvaluepath)[Band(1)] |>
+            permutedims |>
+            x -> replace_missing(x, 0.0) |>
+            x -> aggregate(x; method=sum, scale=(Lat(3), Lon(3)))
+cropvalue |> plot
+southvalue = deepcopy(cropvalue)
+southvalue[Lat(1:80)] .= 0.0
+plot(southvalue)
+northvalue = deepcopy(cropvalue)
+northvalue[Lat(81:lastindex(northvalue, Lat))] .= 0.0
+plot(northvalue)
+```
+
+Now we can define the cost rule:
+
+```julia; results=hidden
+prop_loss = 0.1
+northcost = Biosecurity.DynamicCost(; cost=:cost, population=:population,
+                                    value=northvalue, loss=prop_loss)
+southcost = Biosecurity.DynamicCost(; cost=:cost, population=:population,
+                                    value=southvalue, loss=prop_loss)
+```
+
+
+```julia; results=hidden
+timestep = Month(1)
+```
+
+And run the simulaiton:
+
+```julia; results=hidden
+outputs = [begin
+    ruleset = MultiRuleset(rulesets=(population=fallarmyworm, cost=Ruleset()),
+                           interactions=(cost,),
+                           init=multiinit,
+                           mask=masklayer,
+                           timestep=timestep)
+    tspan = DateTime(2020), DateTime(2024)
+    nframes = length(tspan[1]:Month(1):tspan[2])
+    output = Biosecurity.SumOutput(nframes, gridname=:cost)
+    sim!(output, ruleset; tspan=tspan)
+    output
+end for cost in (northcost, southcost)]
+
+p = plot(outputs)
+```

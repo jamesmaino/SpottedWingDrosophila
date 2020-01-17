@@ -31,10 +31,12 @@ We use DateTime units of for the timestep:
 
 ```{julia; results=hidden}
 timestep = Month(1);
-tspan = DateTime(2016, 1), DateTime(2020, 12)
+tspan = DateTime(2016, 7), DateTime(2020, 12)
 nframes = length(tspan[1]:timestep:tspan[2])
 aust = Lon(DimensionalData.Between(113.338953078, 153.569469029)),
        Lat(DimensionalData.Between(-43.6345972634, -10.6681857235))
+usa = Lon(DimensionalData.Between(-125.0, -66.96)),
+       Lat(DimensionalData.Between(25.0, 49.5))
 ```
 
 ---
@@ -103,7 +105,7 @@ growth = ExactLogisticGrowthMap(layer=growthrates, carrycap=carrycap);
 ### Local dispersal
 
 ```{julia; results=hidden}
-λ = 3.0
+λ = 1.0
 radius = 8
 sze = 2radius + 1
 dm = AreaToArea(30)
@@ -125,11 +127,10 @@ values with something else Dispersal.jl init can't contain `missing` or it will 
 
 ```{julia; results=hidden}
 init = zero(replace_missing(growthrates[GeoData.Time(1)], NaN))
-
-incursion = [(-27, 153)]
-
+au_ncursion = [(-27, 153)]
+us_incursion = [(28.5, -81.8)]
 # Using `Near` finds the nearest cell to the coordinates
-for (lat, lon) in incursion
+for (lat, lon) in us_incursion
     init[Lat(Near(lat)), Lon(Near(lon))] = carrycap
 end
 ```
@@ -137,10 +138,10 @@ end
 ### Define a combined ruleset
 
 ```{julia; results=hidden}
-ruleset = Ruleset(localdisp, allee, growth;
-                  init=init,
-                  mask=masklayer,
-                  timestep=timestep);
+fallarmyworm = Ruleset(localdisp, allee, growth;
+                       init=init,
+                       mask=masklayer,
+                       timestep=timestep);
 ```
 
 ---
@@ -151,27 +152,6 @@ The simplest and most performant output for a simulation is an ArrayOutput,
 which simply writes the simulation to a preallocated array without visualising
 it.
 
-```{julia; results=hidden}
-output = ArrayOutput(init, nframes)
-```
-
-### Run a simulation
-
-To run a simulation, we pass in the output and rulset.
-
-```{julia; results=hidden}
-sim!(output, ruleset; tspan=tspan)
-```
-
-### Save a gif of your simulation
-
-Gif files are an easy way to share the visual dynamics of the simulation. First
-we need to define a color processor to turn the simulation into images for the
-frames of the the gif. This processor can also be used later in web or gtk
-outputs.
-
-You can use the built-in `Greyscale` scheme, or any scheme from
-[ColorSchemes.jl](https://github.com/JuliaGraphics/ColorSchemes.jl).
 
 ```{julia; results=hidden}
 using ColorSchemes, Colors
@@ -193,6 +173,8 @@ savegif(joinpath(basedir, "sim.gif"), output;
 
 ### GTK window
 
+View the layer
+
 ```{julia; eval=false}
 using DynamicGridsGtk
 tspan = DateTime(2016, 1), DateTime(2054, 12)
@@ -200,18 +182,26 @@ output = GtkOutput(init; fps=10, store=true, processor=jet,
                    minval=minimum(growthrates), maxval=maximum(growthrates))
 layercopy = Ruleset(LayerCopy(layer=growthrates); timestep=timestep, init=init, mask=masklayer)
 sim!(output, layercopy; tspan=tspan)
+```
 
+
+View the simulation:
+
+```{julia; eval=false}
 output = GtkOutput(init; fps=10, store=true, processor=viridis,
                    minval=minimum(0.0), maxval=carrycap)
-fallarmyworm = Ruleset(localdisp, allee, growth; timestep=timestep, init=init, mask=masklayer)
 sim!(output, fallarmyworm; tspan=tspan)
+```
 
+Run them together:
+
+```{julia; eval=false}
 init2 = (sim=init, layer=init)
 multiprocessor = LayoutProcessor([:sim :layer], (viridis, jet))
 output = GtkOutput(init2; fps=10, store=true, processor=multiprocessor,
                    minval=(0.0, minimum(growthrates)), maxval=(carrycap, maximum(growthrates)))
 output.running = false
-output.fps = 12
+output.fps = 4
 
 multiruleset = MultiRuleset(rulesets=(sim=fallarmyworm , layer=layercopy),
                        interactions=(),
