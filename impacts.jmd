@@ -9,59 +9,111 @@ using Biosecurity, GeoData, ArchGDAL, Setfield, Plots
 Set up the initialisation arrays:
 
 ```julia; results=hidden
-multiinit = (population=init, cost=zero(init))
+costinit = (population=populationgrid, cost=zero(populationgrid))
 ```
 
-Set up the `fallarmyworm` in the dispersal.jmd script.
+Set up the `dispersalruleset` in the dispersal.jmd script.
 
 Then set up the costs ruleset. First we load the crop value
 array and clean it up for the simulation.
 
 ```julia; results=hidden
-cropvaluepath = "data/clum_crop_value_cea.tif"
+cropvaluepath = "data/maize_sorghum_value.tif"
 cropvalue = GDALarray(cropvaluepath)[Band(1)] |>
             permutedims |>
             x -> replace_missing(x, 0.0) |>
             x -> aggregate(x; method=sum, scale=(Lat(3), Lon(3)))
 cropvalue |> plot
-southvalue = deepcopy(cropvalue)
-southvalue[Lat(1:80)] .= 0.0
-plot(southvalue)
-northvalue = deepcopy(cropvalue)
-northvalue[Lat(81:lastindex(northvalue, Lat))] .= 0.0
-plot(northvalue)
 ```
 
-Now we can define the cost rule:
+Crop loss:
 
 ```julia; results=hidden
-prop_loss = 0.1
-northcost = Biosecurity.DynamicCost(; cost=:cost, population=:population,
-                                    value=northvalue, loss=prop_loss)
-southcost = Biosecurity.DynamicCost(; cost=:cost, population=:population,
-                                    value=southvalue, loss=prop_loss)
+utimestep = timestep / Day(1) * u"d"
+prop_loss = 0.1/365u"d" * utimestep
+damage_threshold = 1e4
+croploss = Biosecurity.DynamicThresholdCost(;
+    source=:population, cost=:cost,
+    sitevalue=cropvalue,
+    scalar=prop_loss,
+    threshold=damage_threshold
+)
+```
+
+Trap costs:
+```julia; results=hidden
+sitemask = cropvalue .> 0
+meantraps = 0.3
+costpertrap = 1200.0/365u"d" * utimestep
+traps = Biosecurity.detectionsites!(nothing, sitemask, meantraps)
+trapcost = Ruleset(FixedCost(traps, costpertrap))
 ```
 
 
 ```julia; results=hidden
-timestep = Month(1)
+timerange = DateTime(2020):timestep:DateTime(2025)
+tspan = timerange[1], timerange[end]
+nframes = length(timerange)
 ```
 
 And run the simulaiton:
 
 ```julia; results=hidden
-outputs = [begin
-    ruleset = MultiRuleset(rulesets=(population=fallarmyworm, cost=Ruleset()),
-                           interactions=(cost,),
-                           init=multiinit,
-                           mask=masklayer,
-                           timestep=timestep)
-    tspan = DateTime(2020), DateTime(2024)
-    nframes = length(tspan[1]:Month(1):tspan[2])
-    output = Biosecurity.SumOutput(nframes, gridname=:cost)
-    sim!(output, ruleset; tspan=tspan)
-    output
-end for cost in (northcost, southcost)]
+using DynamicGridsGtk
+costruleset = MultiRuleset(
+    rulesets=(population=dispersalruleset, cost=trapcost),
+    interactions=(croploss,),
+    init=costinit,
+    mask=boolmask,
+    timestep=timestep
+)
+multiprocessor = LayoutProcessor([:population :cost], (jet, viridis))
+output = GtkOutput(costinit;
+    fps=50,
+    store=true,
+    processor=multiprocessor,
+    minval=(0.0, 0.0),
+    maxval=(carrycap, 1e7)
+)
+sim!(output, costruleset; tspan=tspan)
+maximum(output[end][:cost])
+```
 
-p = plot(outputs)
+And save it as a gif:
+
+```{julia; results=hidden}
+savegif(joinpath(basedir, "output/costs.gif"), output; fps=30)
+```
+
+Now run it for all incursion points:
+
+```julia; results=hidden
+outputs = [begin
+    println("incursion: $lat, $lon")
+    popgrid = GeoArray(zero(populationgrid); name="population")
+    popgrid[Lat(Near(lat)), Lon(Near(lon))] = carrycap / 10
+    costgrid = GeoArray(zero(populationgrid); name="cost")
+    initgrids = (population=popgrid, cost=costgrid)
+    output = Biosecurity.SumOutput(nframes, gridname=:cost)
+    ruleset = MultiRuleset(
+        rulesets=(population=dispersalruleset, cost=trapcost),
+        interactions=(croploss,),
+        init=initgrids,
+        mask=boolmask,
+        timestep=timestep
+    )
+    sim!(output, ruleset; tspan=tspan)
+    DimensionalArray(map(o -> o ./ 1_000_000, output), (DimensionalData.Time(timerange),))
+end for (lat, lon) in incursionpoints]
+```
+
+```julia; results=hidden
+labels = permutedims([keys(incursionpoints)...])
+plot(timerange, outputs;
+    xlabel="Date",
+    ylabel="Cost in dollars (millions)",
+    legend=:topleft,
+    labels=labels,
+)
+savefig("output/costs_by_incursion_point.png")
 ```

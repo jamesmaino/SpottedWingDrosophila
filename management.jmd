@@ -1,0 +1,119 @@
+```julia; results=hidden
+using Biosecurity, GeoData, Setfield, Plots, ArchGDAL
+```
+
+Setup the detection mechanism. Here we make it probabilistic,
+meaning detections occur at some rate for a given population and
+trap coverage:
+
+```julia; results=hidden
+trap_coverage = 0.1
+detection_rate = 0.1
+detectionmode = ProbabilisticDetection(detection_rate, trap_coverage)
+```
+
+Then define the detection model, generating a random distribution
+of traps in cells containing crops of value.
+
+```julia; results=hidden
+# cropvalue is defined in impacts.jmd
+sitemask = cropvalue .> 0
+meantraps = 0.3
+detection = Detection(; population=:population, detected=:detected,
+                      sites=nothing, sitemask=sitemask, meantraps=meantraps, detectionmode=detectionmode)
+```
+
+Set local quarantine response:
+
+```julia; results=hidden
+response_radius = 1
+neighborhood = RadialNeighborhood{response_radius}()
+loc = NeighborhoodResponse(; detected=:detected, response=:loc, neighborhood=neighborhood)
+```
+
+And regional response for state-level trade restriction.
+We first set up the data, and convert all areas not assigned a state to zero.
+
+```julia; results=hidden
+states = permutedims(GDALarray("aus_states.tif")[Band(1), aust...], (Lat, Lon)) |>
+         x -> replace_missing(x, 0) |>
+         x -> aggregate(x; method=Center(), scale=(Lat(3), Lon(3))) |>
+         x -> Int.(x)
+states
+regional = RegionResponse(; detected=:detected, response=:region, regions=states)
+```
+
+
+```julia; results=hidden
+local_effect = 0.02
+juristiction_effect = 0.02
+```
+
+Now we can define the initial conditions grids.
+
+```julia; results=hidden
+regiongrid = zeros(Bool, size(populationgrid))
+localgrid = zeros(Bool, size(populationgrid))
+detectedgrid = zeros(Bool, size(populationgrid))
+manageinit = (population=populationgrid, detected=detectedgrid, loc=localgrid, region=regiongrid)
+```
+
+And define our ruleset:
+
+```{julia; results=hidden}
+manageruleset = MultiRuleset(
+   rulesets=(population=dispersalruleset,),
+   interactions=(detection, loc, regional),
+   init=manageinit,
+   mask=boolmask,
+   timestep=timestep
+)
+```
+
+We use GtkOuput to run the simulation.
+
+```{julia; results=hidden}
+using DynamicGridsGtk
+tspan = DateTime(2020, 1), DateTime(2029, 12)
+manageprocessor = LayoutProcessor([:population :detected; :loc :region], (viridis, jet, oranges, blues))
+output = GtkOutput(manageinit;
+   fps=10,
+   store=true,
+   processor=manageprocessor,
+   minval=(minimum(growthrates_zeromissing), false, false, false),
+   maxval=(1e6, true, true, true)
+)
+sim!(output, manageruleset; tspan=tspan)
+```
+
+Now add an eradication model:
+
+```{julia; results=hidden}
+eradication = Eradication(
+   population=:population,
+   eradicate=:loc,
+   carrying_capacity=10.0
+)
+eradicationruleset = MultiRuleset(
+   rulesets=(population=dispersalruleset,),
+   interactions=(detection, loc, regional),
+   init=manageinit,
+   mask=boolmask,
+   timestep=timestep
+)
+```
+
+And re-run the simulation with eradication in local quarantine areas:
+
+```{julia; results=hidden}
+using DynamicGridsGtk
+tspan = DateTime(2020, 1), DateTime(2029, 12)
+output = GtkOutput(manageinit;
+   fps=10,
+   store=true,
+   processor=manageprocessor,
+   minval=(minimum(growthrates_zeromissing), false, false, false),
+   maxval=(1e6, true, true, true)
+)
+sim!(output, manageruleset; tspan=tspan)
+```

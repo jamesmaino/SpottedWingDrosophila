@@ -1,0 +1,399 @@
+---
+title : Dispersal.jl example
+author : Rafael Schouten
+---
+
+# Dispersal simulations
+In this example we will run a simulation of the spread of the Spotted Winged
+
+Drosophila _D. suzukii_ accross the continental USA.
+
+## Setup
+
+First, load the required packages. Dates is a core julia package that
+give us date/time handling, GeoData simplifies the loading of geospatial
+raster files. It requires also loading NCDatasets.jl and ArchGDAL.jl to load
+NetCDF and GeoTiff files, respectively.
+
+```{julia; results=hidden}
+# using Pk
+# Pkg.add(PackageSpec(url="https://github.com/rafaqz/GeoData.jl", rev="master"))
+using GeoData, NCDatasets, ArchGDAL, DimensionalData, Setfield, Plots, Statistics, Dates, Dispersal
+using GeoData: Time
+using DimensionalData: setdim, rebuild
+basedir = ""
+gr()
+```
+
+### Define simulation settings
+
+We use DateTime units of for the timestep:
+
+```{julia; results=hidden}
+timestep = Day(5);
+aust = Lon(Between(113.338953078, 153.569469029)),
+       Lat(Between(-43.6345972634, -10.6681857235))
+usa = Lon(Between(-125.0, -66.96)), Lat(Between(25.0, 49.5))
+```
+
+---
+
+## Define a RuleSet
+
+This will involve combining multiple dispersal componenents into a single
+`RuleSet` object: population growth, local dispersal, Allee effects, and human
+dispersal.
+
+
+### Climate driven population growth
+
+Follow the [examples tutorial](https://rafaqz.github.io/GrowthRates.jl/dev/example/index.html) over
+at [GrowthRates.jl](https://github.com/rafaqz/GrowthRates.jl). To skip this step
+just download the output saved in the example:
+
+```{julia; eval=false}
+dataurl = "https://media.githubusercontent.com/media/cesaraustralia/Dispersal.jl/data"
+growthratesfilename = "growthrates.ncd"
+growthratesfilepath = joinpath(basedir, "data", growthratesfilename)
+```
+
+And select just the bounding box for Australia, set the dimension order to Lat/Lon
+and reverse the Lat dim:
+
+```{julia; eval=false}
+growthrates = NCDarray(growthratesfilepath)[aust...] |>
+    x->permutedims(x, (Lat, Lon, GeoData.Time)) |>
+    x->reverse(x; dims=Lat) |>
+    x->setdim(x, rebuild(dims(x, GeoData.Time); grid=RegularGrid(; step=Month(1))))
+```
+
+### Define masking layers
+
+The boolean mask lets the simulation know which cells should be ignored.
+The missing mask can be used to mask maps before plotting.
+
+```{julia; results=hidden}
+boolmask = GeoData.boolmask(growthrates[GeoData.Time(1)])
+missingmask = GeoData.missingmask(growthrates[GeoData.Time(1)])
+plot(boolmask)
+```
+
+Plot the growth layer:
+
+```{julia; results=hidden}
+plot(growthrates[GeoData.Time(1:3:12)]; legend=:none, clims=(0.0, 0.15))
+GeoData.step(dims(growthrates, Time))
+# TODO fix mean with Time dim
+# mean(growthrates; dims=GeoData.Time())
+```
+
+Remove missing values from the growthrates array. We don't want them to propagate
+through the simulation.
+
+```{julia; results=hidden}
+growthrates_zeromissing = replace_missing(growthrates, 0.0)
+```
+
+Create a `ExactLogisticGrowthMap` rule from the layer, here we use
+unitful units for the layers' `Time` dimension:
+
+```{julia; results=hidden}
+carrycap = 1e8
+growth = ExactLogisticGrowthMap(layer=growthrates_zeromissing, carrycap=carrycap);
+```
+
+### Local dispersal
+
+Local dispersal simulates natural dispersal of populations, according
+to ability to fly or use other mechanisms.
+
+```{julia; results=hidden}
+# TODO: calculate λ from distance travelled
+λ = 0.6
+radius = 4
+sze = 2radius + 1
+dm = AreaToArea(30)
+@time hood = DispersalKernel{radius}(;kernel=zeros(Float64, radius, radius),
+                               formulation=ExponentialKernel(λ), distancemethod=dm)
+localdisp = InwardsPopulationDispersal(hood)
+k = DynamicGrids.neighborhood(localdisp).kernel
+k |> heatmap
+savefig("output/dispersal_kernel.png")
+```
+
+### Allee effects
+
+Allee effects specify minimum population required to sustain growth
+within a cell. Populations below the `minfounders` threshold will be removed.
+
+```{julia; results=hidden}
+allee = AlleeExtinction(minfounders=200.0);
+```
+
+### Human Dispersal
+
+The HumanDispersal rule simulates dispersal by humans between population centers.
+It uses a simple gravity model to combine population and distance, generating
+a shortlist of dispersal destinations for each cell.
+
+```{julia; results=hidden}
+human_pop_path = joinpath(basedir, "data/population_density.tif")
+human_pop = GDALarray(human_pop_path)[Band(1), aust...] |>
+            permutedims |> replace_missing |>
+            x -> aggregate(x; method=Center(), scale=(Lat(3), Lon(3)))
+human_pop |> plot
+scale = 1
+using Statistics
+aggregator = sum
+human_exponent = 1.8
+dist_exponent = 1.2
+dispersalperpop = 1e-5
+max_dispersers = 500.0
+shortlist_len = 200
+plot(human_pop)
+@time humandisp = HumanDispersal(parent(human_pop); scale=scale, shortlist_len=shortlist_len, dispersalperpop=dispersalperpop,
+                                 max_dispersers=max_dispersers, human_exponent=human_exponent,
+                                 dist_exponent=dist_exponent, timestep=timestep);
+dests = similar(human_pop)
+Dispersal.populate!(dests, humandisp, scale)
+plot(dests)
+savefig("output/human_dispersal_destinations.png")
+```
+
+
+### Define initialisation data
+
+Make a zeros array and populate the starting cells. We need to replace the `missing`
+values with something else Dispersal.jl init can't contain `missing` or it will spread everywhere:
+
+```{julia; results=hidden}
+populationgrid = replace_missing(zero(growthrates[GeoData.Time(1)]), NaN)
+au_incursion = [(-27, 153)]
+us_incursion = [(28.5, -81.8)]
+# Using `Near` finds the nearest cell to the coordinates
+for (lat, lon) in au_incursion
+    populationgrid[Lat(Near(lat)), Lon(Near(lon))] = carrycap
+end
+```
+
+### Define a combined ruleset
+
+```{julia; results=hidden}
+dispersalruleset = Ruleset(
+    humandisp, localdisp, allee, growth;
+    init=populationgrid,
+    mask=boolmask,
+    timestep=timestep
+);
+```
+
+---
+
+## Output
+
+The simplest and most performant output for a simulation is an ArrayOutput,
+which simply writes the simulation to a preallocated array without visualising
+it.
+
+
+```{julia; results=hidden}
+using ColorSchemes, Colors
+zerocolor = RGB24(0.7)
+maskcolor = RGB24(0.0)
+oranges = ColorProcessor(ColorSchemes.Oranges_3, zerocolor, maskcolor)
+jet = ColorProcessor(ColorSchemes.jet, zerocolor, maskcolor)
+viridis = ColorProcessor(ColorSchemes.viridis, zerocolor, maskcolor)
+inferno = ColorProcessor(ColorSchemes.inferno, zerocolor, maskcolor)
+magma = ColorProcessor(ColorSchemes.magma, zerocolor, maskcolor)
+blues = ColorProcessor(ColorSchemes.Blues_3, zerocolor, maskcolor)
+algae = ColorProcessor(ColorSchemes.algae, zerocolor, maskcolor)
+cyclic = ColorProcessor(ColorSchemes.cyclic_grey_15_85_c0_n256, zerocolor, maskcolor)
+rainbow1 = ColorProcessor(ColorSchemes.rainbow1, zerocolor, maskcolor)
+```
+
+### GTK window
+
+Set up a simple rule that just copies the growthrate layer to a grid so that
+we can view it next to the simulation.
+
+```{julia; results=hidden}
+tspan = DateTime(2021, 1), DateTime(2035, 12)
+layercopy = Ruleset(LayerCopy(layer=growthrates_zeromissing))
+layergrid = zero(populationgrid)
+init2 = (population=populationgrid, layer=layergrid)
+any(isnan.(growthrates_zeromissing))
+multiruleset = MultiRuleset(
+    rulesets=(
+        population=dispersalruleset,
+        layer=layercopy
+    ),
+    interactions=(),
+    init=init2,
+    mask=boolmask,
+    timestep=timestep
+);
+```
+
+Run the simulation in a DynamicGridsGtk window:
+
+```{julia; results=hidden}
+using DynamicGridsGtk
+multiprocessor = LayoutProcessor([:population :layer], (jet, inferno))
+output = GtkOutput(init2; ps=10, store=true, processor=multiprocessor,
+                   minval=(0.0, minimum(growthrates_zeromissing)),
+                   maxval=(carrycap, maximum(growthrates_zeromissing)))
+output.running = false
+output.fps = 30
+display(output)
+sim!(output, multiruleset; tspan=tspan);
+```
+And save it as a gif:
+
+```{julia; results=hidden}
+savegif(joinpath(basedir, "output/dispersal.gif"), output; fps=30)
+```
+
+
+Now with replicates:
+
+```{julia; results=hidden}
+#reps = 1:10 # simulation replicate
+#initreps = [deepcopy(init) for i in 1:10]
+#output = GtkOutput(init; ps=10, store=true, processor=jet, minval=0.0, maxval=carrycap)
+#output.running = false
+#output.fps = 300
+#sim!(output, multiruleset; tspan=tspan, nreplicates=10);
+```
+
+
+### Interactive web outputs
+
+```{julia; results=hidden}
+# using DynamicGridsInteract
+# output = InteractOutput(init, fallarmyworm;
+                        # minval=minimum(0.0), maxval=carrycap, timestep=timestep,
+                        # fps=10, store=true, processor=jet, slider_throttle=1.0)
+# display(output)
+# output.running = false
+# sim!(output, fallarmyworm; tspan=tspan)
+```
+
+
+## Mapping incursion-point sensitivity
+
+We will look at plotting some likely scenarios where incursion occurs
+at a major port, then model all possible incursion scenarios.
+
+Set up the simulation:
+
+```{julia; results=hidden}
+starttime = DateTime(2021, 1)
+stoptime = DateTime(2022, 12)
+tspan = starttime, stoptime
+len = length(starttime:timestep:stoptime)
+init = zero(populationgrid)
+output = ArrayOutput(init, len)
+```
+
+Set up the output grid (which can be smaller than the sim to save time)
+Now make some pathway plots for some key incursion points.
+
+
+```{julia; results=hidden}
+incursionpoints = (
+    Adelaide=(-34.9285, 138.6007),
+    Brisbane=(-27.4698, 153.0251),
+    Cairns=(-16.9186, 145.7781),
+    Melbourne=(-37.8136, 144.9631),
+    Perth=(-31.9505, 115.8605),
+    Sydney=(-33.8688, 151.2093),
+)
+```
+
+And generate the plot.
+
+```{julia; results=hidden}
+plots = []
+timestepdays = timestep / Day(1)
+for (key, (lat, lon)) in zip(keys(incursionpoints), incursionpoints)
+    init = zero(populationgrid)
+    init[Lat(Near(lat)), Lon(Near(lon))] = carrycap / 10
+    output = ArrayOutput(init, len)
+    sim!(output, dispersalruleset; init=init, tspan=tspan)
+    stepped = similar(output[1], Int)
+    @set! stepped.refdims = ()
+    @set! stepped.name = "Time since incursion (days)"
+    stepped .= 0
+    for f in eachindex(output)
+        o = output[f]
+        println(f)
+        for i in CartesianIndices(stepped)
+            if stepped[i] === 0 && o[i] > 0
+                stepped[i] = f * timestepdays
+            end
+        end
+    end
+
+    tsteps = length(tspan[1]:timestep:tspan[2])
+    replace!(stepped, 0 => (tsteps + 1) * timestepdays)
+    push!(plots, plot(stepped .* missingmask; color=:inferno_r, xlabel="", ylabel="", title=key))
+end
+```
+
+```{julia; results=hidden}
+plot(plots...; size=(1200, 800))
+savefig("output/incursionpathways.png")
+```
+
+We can also save the plots as individual figures.
+
+```{julia; results=hidden}
+for (i, key) in enumerate(keys(incursionpoints))
+    plot(plots[i])
+    savefig("output/incursionpathway_$key.png")
+end
+```
+
+Now we will loop over all locations and reps to create grid where the value of each cell
+reflects the mean number of cells invaded for an incursion commenced at that cell.
+
+
+```{julia; results=hidden}
+nreps = 5
+stepsize = 2
+cellsinvaded = aggregate(populationgrid, scale=stepsize)
+@set! cellsinvaded.name = "Cells invaded"
+```
+
+Then loop over the aggregated grid:
+
+```{julia; results=hidden}
+for i = 1:stepsize:size(cellsinvaded, 1) * stepsize,
+    j = 1:stepsize:size(cellsinvaded, 2) * stepsize
+    if boolmask[i, j]
+        println(i,", ", j)
+        init .= 0
+        init[i, j] = carrycap
+        invaded = 0
+        for k in 1:nreps
+            sim!(output, dispersalruleset; init=init, tspan=tspan)
+            invaded += sum(output[end] .> 0)
+        end
+        cellsinvaded[(i - 1) ÷ stepsize + 1, (j - 1) ÷ stepsize + 1] = invaded / nreps
+    end
+end
+```
+
+Now plot:
+
+```{julia; results=hidden}
+area = cellsinvaded .* 27*27*1e-6 .*  aggregate(missingmask, scale=stepsize)
+plot(area; colorbar_title="Area invaded from incursion pt. (million km²)", title="Area invaded after 2 years")
+```
+
+And save the output:
+
+```{julia; results=hidden}
+savefig("output/cellsinvaded$(nreps)reps.png")
+write("output/cellsinvaded$(nreps)reps.tif", NCDarray, cellsinvaded)
+```
