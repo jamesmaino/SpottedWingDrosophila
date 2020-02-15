@@ -145,6 +145,7 @@ for (i, key) in enumerate(keys(incursionpoints))
 end
 ```
 
+
 Now loop over all locations and reps to create grid where the value of each cell
 reflects the mean number of cells invaded for an incursion commenced at that cell.
 

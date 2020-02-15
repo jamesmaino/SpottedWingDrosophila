@@ -6,8 +6,6 @@ Set up the `dispersalruleset` in the dispersal.jmd script.
 Then set up the costs ruleset. First we load the crop value
 array and clean it up for the simulation.
 
-Crop loss:
-
 ```julia; results=hidden
 utimestep = 365.25u"d" / 12
 prop_loss = 0.1/365u"d" * utimestep
@@ -38,10 +36,8 @@ nframes = length(timerange)
 Set up the initialisation arrays:
 
 ```julia; results=hidden
-costgrid = zero(populationgrid)
 costinit = (population=populationgrid, cost=costgrid)
 ```
-
 
 And run the simulaiton:
 

@@ -98,8 +98,8 @@ Now add an eradication model:
 eradication = ControlledMap(
    targetgrid=:population,
    controlgrid=:loc,
-   f=min,
-   val=1e3,
+   f=*,
+   val=0.5,
 )
 eradicationruleset = MultiRuleset(
    rulesets=(population=dispersalruleset,),
@@ -108,14 +108,11 @@ eradicationruleset = MultiRuleset(
    mask=boolmask,
    timestep=timestep,
 )
-sim!(output, eradicationruleset; tspan=tspan)
 ```
 
 And re-run the simulation with eradication in local quarantine areas:
 
 ```{julia; results=hidden}
-using DynamicGridsGtk
-tspan = DateTime(2020, 1), DateTime(2030, 1)
 output = GtkOutput(manageinit;
    fps=100,
    store=true,
@@ -123,6 +120,7 @@ output = GtkOutput(manageinit;
    minval=(zero(carrycap), nothing, nothing, nothing),
    maxval=(carrycap, nothing, nothing, nothing),
 )
+sim!(output, eradicationruleset; tspan=tspan)
 ```
 
 Now add quarantine, for a full management simulation:
@@ -143,11 +141,6 @@ managementruleset = MultiRuleset(
    mask=boolmask,
    timestep=timestep,
 )
-# using ProfileView, Profile
-# Profile.clear()
-# output = ArrayOutput(manageinit, nframes)
-# @time sim!(output, managementruleset; tspan=tspan)
-# ProfileView.view()
 ```
 
 
@@ -164,14 +157,13 @@ fullinit = (
 ```
 
 ```{julia; results=hidden}
-function fullruleset(eradication, local_effect, regional_effect, trap_density)
-#eradication = local_effect = regional_effect = trap_density = 0.0
-   utimestep = 365.25u"d" / 12
+function fullruleset(eradication_effect, local_effect, regional_effect, trap_density)
    meantraps = 0.3
    detection_rate = 0.0041
    trap_coverage = 0.1
    detectionmode = ProbabilisticDetection(detection_rate, trap_coverage)
    trapsites = Biosecurity.detectionsites(cropmask, trap_density)
+   localdispersalruleset = Ruleset(localdisp, allee, growth)
    detection = Detection(;
       population=:population,
       detected=:detected,
@@ -179,28 +171,15 @@ function fullruleset(eradication, local_effect, regional_effect, trap_density)
       detectionmode=detectionmode,
    )
    response_radius = 1
-   neighborhood = RadialNeighborhood{response_radius}()
    locresponse = NeighborhoodResponse(;
       controlgrid=:detected,
       targetgrid=:loc,
-      neighborhood=neighborhood,
+      neighborhood=RadialNeighborhood{response_radius}(),
    )
    regionalresponse = RegionResponse(;
       controlgrid=:detected,
       targetgrid=:region,
       regions=states,
-   )
-   #cap_eradication = ControlledMap(;
-   #   controlgrid=:loc,
-   #   targetgrid=:population,
-   #   f=min,
-   #   val=carrycap
-   #)
-   pop_reduction = ControlledMap(;
-      controlgrid=:loc,
-      targetgrid=:population,
-      f=*,
-      val=eradication,
    )
    # Human disp is set up in spread.jmd
    quarantine = QuarantinedHumanDispersal(;
@@ -211,39 +190,48 @@ function fullruleset(eradication, local_effect, regional_effect, trap_density)
       local_effect=local_effect,
       region_effect=regional_effect,
    )
+   eradication = ControlledMap(
+      targetgrid=:population,
+      controlgrid=:loc,
+      f=*,
+      val=eradication_effect,
+   )
+
+   # Costs
    croploss_cost = DynamicThresholdCost(;
        inputgrid=:population,
        costgrid=:cost,
        cellvalue=cropvalue,
-       scalar=0.1 / 365u"d" * utimestep,
+       scalar=0.1 / 12, # Scale from years to months
        threshold=1e4,
    )
-   eradication_cost = DynamicCost(;
-       inputgrid=:loc,
-       costgrid=:cost,
-       cellvalue=1e5,
-       scalar=1.0, #TODO,
-   )
+   #eradication_cost = DynamicCost(;
+       #inputgrid=:loc,
+       #costgrid=:cost,
+       #cellvalue=1e5,
+       #scalar=0.0, #TODO,
+   #)
    local_quarantine_impact = 0.5
    loc_quarantine_cost = DynamicCost(;
        inputgrid=:loc,
        costgrid=:cost,
        cellvalue=cropvalue,
-       scalar=local_quarantine_impact / 365u"d" * utimestep,
+       scalar=local_quarantine_impact / 12, # Scale from years to months
    )
    region_quarantine_impact = 0.5
    region_quarantine_cost = DynamicCost(;
        inputgrid=:region,
        costgrid=:cost,
        cellvalue=cropvalue,
-       scalar= region_quarantine_impact / 365u"d" * utimestep,
+       scalar= region_quarantine_impact / 12, # Scale from years to months
    )
    costpertrap=1000.0
    trapcost = FixedCost(;
       cellvalue=trapsites,
-      scalar=costpertrap / 365u"d" * utimestep,
+      scalar=costpertrap / 12, # Scale from years to months
    )
 
+   # Ruleset
    MultiRuleset(;
       rulesets=(
          population=localdispersalruleset,
@@ -254,9 +242,10 @@ function fullruleset(eradication, local_effect, regional_effect, trap_density)
          detection,
          locresponse,
          regionalresponse,
-         #croploss_cost,
-         #eradication_cost,
-         #eradication,
+         croploss_cost,
+         regional_quarantine_cost,
+         local_quarantine_cost,
+         eradication,
       ),
       init=fullinit,
       mask=boolmask,
@@ -275,19 +264,7 @@ trap_density                = [0.1, 0.01, 0.001]
 eradication_effects         = [0.0, 0.5, 0.99]
 nreps = 3
 detection_threshold = 1e4
-#fullprocessor = LayoutProcessor([:population :detected; :loc :region; :cost nothing], (viridis, jet, oranges, blues, oranges))
-#output = GtkOutput(fullinit;
-   #fps=100,
-   #store=true,
-   #processor=fullprocessor,
-   #minval=(minimum(growthrates_zeromissing), nothing, nothing, nothing, 0.0),
-   #maxval=(1e6, nothing, nothing, nothing, 1e8),
-#)
-# output.running = false
-#local_quarantine_effects    = [0.5]
-#regional_quarantine_effects = [0.5]
-#eradication_effects         = [0.5]
-#trap_density                = [0.01]
+mem = ReentrantLock() # For locking the dataframe while threading
 
 sensitivity = DataFrame(
    incursion = Symbol[],
@@ -306,8 +283,6 @@ for e in eradication_effects,
     r in regional_quarantine_effects,
     t in trap_density
    println("running: ", (incursion=loc, eradication=e, loc_quarantine=l, reg_quarantine=r, nreps=nreps))
-   println(Dates.format(now(), "MM::SS"))
-   m = ReentrantLock()
    Threads.@threads for rep in 1:nreps
       output = ArrayOutput(fullinit, nframes)
       ruleset = fullruleset(e, l, r, t)
@@ -316,9 +291,9 @@ for e in eradication_effects,
       sim!(output, ruleset; tspan=tspan)
       area = count(x -> x > detection_threshold, output[end][:population])
       cost = sum(output[end][:cost])
-      lock(m)
+      lock(mem)
       push!(sensitivity, (loc, e, l, r, t, rep, area, cost))
-      unlock(m)
+      unlock(mem)
    end
    yield()
 end
@@ -346,3 +321,17 @@ for (i in incursions)
 end
 """
 ````
+
+#fullprocessor = LayoutProcessor([:population :detected; :loc :region; :cost nothing], (viridis, jet, oranges, blues, oranges))
+#output = GtkOutput(fullinit;
+   #fps=100,
+   #store=true,
+   #processor=fullprocessor,
+   #minval=(minimum(growthrates_zeromissing), nothing, nothing, nothing, 0.0),
+   #maxval=(1e6, nothing, nothing, nothing, 1e8),
+#)
+# output.running = false
+#local_quarantine_effects    = [0.5]
+#regional_quarantine_effects = [0.5]
+#eradication_effects         = [0.5]
+#trap_density                = [0.01]
