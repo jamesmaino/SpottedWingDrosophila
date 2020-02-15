@@ -1,35 +1,15 @@
 In this script we will estimate the cost to industry of a Fall Armyworm
 incursion, using cesars private Biosecurity.jl package.
 
-```julia; results=hidden
-using Biosecurity, GeoData, ArchGDAL, Setfield, Plots
-```
-
-
-Set up the initialisation arrays:
-
-```julia; results=hidden
-costinit = (population=populationgrid, cost=zero(populationgrid))
-```
-
 Set up the `dispersalruleset` in the dispersal.jmd script.
 
 Then set up the costs ruleset. First we load the crop value
 array and clean it up for the simulation.
 
-```julia; results=hidden
-cropvaluepath = "data/maize_sorghum_value.tif"
-cropvalue = GDALarray(cropvaluepath)[Band(1)] |>
-            permutedims |>
-            x -> replace_missing(x, 0.0) |>
-            x -> aggregate(x; method=sum, scale=(Lat(3), Lon(3)))
-cropvalue |> plot
-```
-
 Crop loss:
 
 ```julia; results=hidden
-utimestep = timestep / Day(1) * u"d"
+utimestep = 365.25u"d" / 12
 prop_loss = 0.1/365u"d" * utimestep
 damage_threshold = 1e4
 croploss = Biosecurity.DynamicThresholdCost(;
@@ -41,6 +21,7 @@ croploss = Biosecurity.DynamicThresholdCost(;
 ```
 
 Trap costs:
+
 ```julia; results=hidden
 sitemask = cropvalue .> 0
 meantraps = 0.3
@@ -49,19 +30,25 @@ traps = Biosecurity.detectionsites!(nothing, sitemask, meantraps)
 trapcost = Ruleset(FixedCost(traps, costpertrap))
 ```
 
-
 ```julia; results=hidden
 timerange = DateTime(2020):timestep:DateTime(2025)
 tspan = timerange[1], timerange[end]
 nframes = length(timerange)
 ```
+Set up the initialisation arrays:
+
+```julia; results=hidden
+costgrid = zero(populationgrid)
+costinit = (population=populationgrid, cost=costgrid)
+```
+
 
 And run the simulaiton:
 
 ```julia; results=hidden
 using DynamicGridsGtk
 costruleset = MultiRuleset(
-    rulesets=(population=dispersalruleset, cost=trapcost),
+    rulesets=(population=dispersalruleset,),
     interactions=(croploss,),
     init=costinit,
     mask=boolmask,
@@ -82,7 +69,7 @@ maximum(output[end][:cost])
 And save it as a gif:
 
 ```{julia; results=hidden}
-savegif(joinpath(basedir, "output/costs.gif"), output; fps=30)
+savegif(joinpath(basedir, "output/costs.gif"), output; fps=20)
 ```
 
 Now run it for all incursion points:
@@ -96,7 +83,7 @@ outputs = [begin
     initgrids = (population=popgrid, cost=costgrid)
     output = Biosecurity.SumOutput(nframes, gridname=:cost)
     ruleset = MultiRuleset(
-        rulesets=(population=dispersalruleset, cost=trapcost),
+        rulesets=(population=dispersalruleset,),
         interactions=(croploss,),
         init=initgrids,
         mask=boolmask,
@@ -108,8 +95,9 @@ end for (lat, lon) in incursionpoints]
 ```
 
 ```julia; results=hidden
-labels = permutedims([keys(incursionpoints)...])
+labels = permutedims(string.([keys(incursionpoints)...], Ref(" incursion")))
 plot(timerange, outputs;
+    title = "Crop losses to Drosophila suzukii",
     xlabel="Date",
     ylabel="Cost in dollars (millions)",
     legend=:topleft,

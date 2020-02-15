@@ -1,0 +1,263 @@
+## Setup
+
+First, load the required packages. Dates is a core julia package that
+give us date/time handling, GeoData simplifies the loading of geospatial
+raster files. It requires also loading NCDatasets.jl and ArchGDAL.jl to load
+NetCDF and GeoTiff files, respectively.
+
+```{julia; results=hidden}
+using DimensionalData, GeoData, ArchGDAL, Dispersal, Biosecurity
+using Setfield, Statistics, Dates, Plots, Unitful
+using DimensionalData: setdim, rebuild
+basedir = ""
+gr()
+```
+
+### Define simulation settings
+
+We use DateTime units of for the timestep:
+
+```{julia; results=hidden}
+timestep = Month(1);
+lonmin = 113.3402
+#lonmax = 153.9523
+lonmax = 153.9023 # Fix for geodata Between error
+latmin = -43.62234
+latmax = -10.65125
+aust = Lon(Between(lonmin, lonmax)), Lat(Between(latmin, latmax))
+usa = Lon(Between(-125.0, -66.96)), Lat(Between(25.0, 49.5))
+
+incursionpoints = (
+    Adelaide=(-34.901608, 138.601547),
+    Brisbane=(-27.436190, 152.990588),
+    Cairns=(-16.937281, 145.747709),
+    Devonport=(-41.180545, 146.314887),
+    Melbourne=(-37.805896, 144.959527),
+    Mildura=(-34.219504, 142.130864),
+    Perth=(-31.9505, 115.8605),
+)
+```
+
+## Define a RuleSet
+
+This will involve combining multiple dispersal componenents into a single
+`RuleSet` object: population growth, local dispersal, Allee effects, and human
+dispersal.
+
+
+### Climate driven population growth
+
+Load the growthrates layer:
+
+From netcdf:
+
+```{julia; eval=false}
+# growthratesfilename = "growthrates.ncd"
+# growthratesfilepath = joinpath(basedir, "data", growthratesfilename)
+#growthrates = NCDarray(growthratesfilepath)[aust...] |>
+    #x->permutedims(x, (Lat, Lon, Ti)) |>
+    #x->reverse(x; dims=Lat) |>
+    #x->setdim(x, rebuild(dims(x, Ti); grid=RegularGrid(; step=Month(1))))
+```
+
+From multiple tif files:
+
+```{julia; eval=false}
+growthrates_filenames = ["data/growthrates_tifs/limited_growth_2017_$n.tif"
+                            for n in lpad.(string.(1:12), 2, "0")]
+grtifs = GDALarray.(growthrates_filenames; name="Growth Rate")
+growthratesvec = (A -> A[Band(1), aust...]).(grtifs)
+growthtimespan = DateTime(2017,1):Month(1):DateTime(2017,12)
+growthrates = cat(growthratesvec...; dims=Ti(growthtimespan)) |>
+    x->permutedims(x, (Lat, Lon, Ti))
+growthrates[Ti(1)] |> plot
+```
+
+From HDF5:
+
+```{julia; eval=false}
+# using HDF5
+# swd_data = h5open("data/spread_inputs_Aus_SWD.h5", "r")
+# dimz = (Lat((20, 60); grid=AlignedGrid(order=GeoData.Ordered(GeoData.Forward(), GeoData.Reverse(), GeoData.Forward()))),
+        # Lon((-125, -75); grid=AlignedGrid()))
+# populationgrid = GeoArray(read(swd_data["x_y_initial"]["brisbane"]) .* 1f9, dimz; missingval=NaN32)[aust...] # Arbitrary initial condition
+# monthsofyear = Time(DateTime(2008):Month(1):DateTime(2008)+Month(11))
+# growthrates = GeoArray(read(swd_data["x_y_month_intrinsicGrowthRate"]), (dimz..., monthsofyear); missingval=NaN32) |>
+
+# growthrates[Time(12)] |> plot
+# size(growthrates)
+```
+
+Plot the growth layer:
+
+```{julia; results=hidden}
+plot(growthrates[GeoData.Time(1:3:12)]; legend=:none, clims=(0.0, 0.15))
+plot(mean(growthrates; dims=GeoData.Time()); clims=(0, 0.15))
+```
+
+Remove missing values from the growthrates array. We don't want them to propagate
+through the simulation.
+
+```{julia; results=hidden}
+growthrates_zeromissing = replace_missing(growthrates, 0.0)
+```
+
+
+```julia; results=hidden
+cropvaluepath = "data/clum_crop_value_cea.tif"
+cropvalue = GDALarray(cropvaluepath)[Band(1)] |> permutedims |> x -> replace_missing(x, 0.0)
+cropvalue |> plot
+cropmask = cropvalue .> 0
+cropmask |> plot
+# Check out growthrates and cropvalue arrays match
+@assert all(dims(cropvalue, Lat).val .≈ dims(growthrates, Lat).val)
+@assert all(dims(cropvalue, Lon).val .≈ dims(growthrates, Lon).val)
+```
+
+
+```julia; results=hidden
+statespath = "data/aus_states.tif"
+states = GDALarray(statespath)[Band(1)] |> permutedims |> x -> replace_missing(x, 0.0)
+states |> plot
+# Check out growthrates and cropvalue arrays match
+@assert all(dims(states, Lat).val .≈ dims(growthrates, Lat).val)
+@assert all(dims(states, Lon).val .≈ dims(growthrates, Lon).val)
+```
+
+
+### Define masking layers
+
+The boolean mask lets the simulation know which cells should be ignored.
+The missing mask can be used to mask maps before plotting.
+
+```{julia; results=hidden}
+boolmask = GeoData.boolmask(growthrates[GeoData.Time(1)])
+missingmask = GeoData.missingmask(growthrates[GeoData.Time(1)])
+plot(boolmask)
+```
+
+
+
+
+## Define Rules
+
+
+Create a `ExactLogisticGrowthMap` rule from the layer, here we use
+unitful units for the layers' `Time` dimension:
+
+```{julia; results=hidden}
+carrycap = 1e8
+growth = ExactLogisticGrowthMap(
+    layer=growthrates_zeromissing,
+    carrycap=carrycap,
+    timestep=Day(1)
+);
+```
+
+### Local dispersal
+
+Local dispersal simulates natural dispersal of populations, according
+to ability to fly or use other mechanisms.
+
+```{julia; results=hidden}
+
+# Local dispersal
+λ = 0.0125
+radius = 1
+
+@time hood = DispersalKernel{radius}(
+    formulation=ExponentialKernel(λ),
+    distancemethod=AreaToArea(30),
+)
+localdisp = InwardsPopulationDispersal(hood)
+hood.kernel |> heatmap
+savefig("output/dispersal_kernel.png")
+```
+
+### Allee effects
+
+Allee effects specify minimum population required to sustain growth
+within a cell. Populations below the `minfounders` threshold will be removed.
+
+```{julia; results=hidden}
+allee = AlleeExtinction(minfounders=22.0);
+```
+
+### Human Dispersal
+
+The HumanDispersal rule simulates dispersal by humans between population centers.
+It uses a simple gravity model to combine population and distance, generating
+a shortlist of dispersal destinations for each cell.
+
+```{julia; results=hidden}
+human_pop_path = joinpath(basedir, "data/population_density.tif")
+human_pop = GDALarray(human_pop_path)[Band(1), aust...] |>
+            permutedims |> replace_missing
+human_pop |> plot
+
+scale = 8
+@time humandisp = HumanDispersal(data(human_pop);
+    scale=scale,
+    human_exponent=1.075,
+    dist_exponent=1.429,
+    dispersalperpop=8.703e-9,
+    max_dispersers=3.264e4,
+    shortlist_len=100,
+    timestep=timestep,
+)
+
+dests = Dispersal.populate!(zero(human_pop), humandisp)
+replace(dests, 0 => missing) |> plot
+savefig("output/human_dispersal_destinations.png")
+```
+
+### Define initialisation data
+
+Make a zeros array and populate the starting cells. We need to replace the `missing`
+values with something else Dispersal.jl init can't contain `missing` or it will spread everywhere:
+
+```{julia; results=hidden}
+populationgrid = replace_missing(zero(growthrates[GeoData.Time(1)]), NaN)
+# Using `Near` finds the nearest cell to the coordinates
+lat, lon = incursionpoints[:Brisbane]
+populationgrid[Lat(Near(lat)), Lon(Near(lon))] = carrycap
+layergrid = zero(populationgrid)
+costgrid = zero(populationgrid)
+localgrid = BitArray(populationgrid .* 0)
+regiongrid = BitArray(populationgrid .* 0)
+detectedgrid = BitArray(populationgrid .* 0)
+```
+
+### Define a combined ruleset
+
+```{julia; results=hidden}
+dispersalruleset = Ruleset(
+    humandisp, localdisp, allee, growth;
+    init=populationgrid,
+    mask=boolmask,
+    timestep=timestep
+);
+```
+
+
+## Output
+
+The simplest and most performant output for a simulation is an ArrayOutput,
+which simply writes the simulation to a preallocated array without visualising
+it.
+
+
+```{julia; results=hidden}
+using ColorSchemes, Colors
+zerocolor = RGB24(0.7)
+maskcolor = RGB24(0.0)
+oranges = ColorProcessor(ColorSchemes.Oranges_3, zerocolor, maskcolor)
+jet = ColorProcessor(ColorSchemes.jet, zerocolor, maskcolor)
+viridis = ColorProcessor(ColorSchemes.viridis, zerocolor, maskcolor)
+inferno = ColorProcessor(ColorSchemes.inferno, zerocolor, maskcolor)
+magma = ColorProcessor(ColorSchemes.magma, zerocolor, maskcolor)
+blues = ColorProcessor(ColorSchemes.Blues_3, zerocolor, maskcolor)
+algae = ColorProcessor(ColorSchemes.algae, zerocolor, maskcolor)
+cyclic = ColorProcessor(ColorSchemes.cyclic_grey_15_85_c0_n256, zerocolor, maskcolor)
+rainbow1 = ColorProcessor(ColorSchemes.rainbow1, zerocolor, maskcolor)
+```

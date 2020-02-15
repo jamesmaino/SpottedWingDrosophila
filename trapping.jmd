@@ -8,6 +8,7 @@ using Distributions, DataFrames, CSV
 First write a function to build a randomised trapping grid
 
 ```{julia; results=hidden}
+# TODO use detectionsites!
 function build_trappinggrid(cropval, traps_per_cell)
     trappinggrid = similar(cropval, Int8)
     for i in eachindex(trappinggrid)
@@ -81,16 +82,18 @@ timestep = dispersalruleset.timestep
 tspan = starttime, stoptime
 detections = 0.0052 # mean rate of detection for 93 m trapping radius from Kirkpatrick 2018 across mean([27, 48]) = 37.5 d
 surveylen = 37.5u"d"
-utimestep = timestep / Day(1) * u"d"
+utimestep = 365.25u"d" / 12
 detection_per_timestep = detections / surveylen * utimestep
-gridsize = 27, 27
+gridsize = 9, 9
 simlen = length(starttime:timestep:stoptime)
 
-# TODO remove hack to make arrays match
-# cropvalue is loaded in impacts.jmd
-hort = map(x -> x > 0 ? 1 : 0, cropvalue)[Lon(1:143)]
-suit = map(x -> x > 0 ? 1 : 0, mean(growthrates_zeromissing; dims=Time)[Time(1)])
-suithort = suit .* hort
+hort = map(x -> x > 0 ? 1 : 0, cropvalue)
+size(hort)
+suit = map(x -> x > 0 ? 1 : 0, mean(growthrates_zeromissing; dims=Time)[Ti(1)])
+for lat in dims(suit, Lat), lon in dims(suit, Lon)
+    suit[Lat(At(lat)), Lon(Near(lon))] *= hort[Lat(Near(lat)), Lon(Near(lon))]
+end
+suit |> plot
 
 const TupleOrMissingTuple = Union{Tuple{Missing,Missing},Tuple{Float64,Float64}}
 areaoutput = TupleOrMissingTuple[(-1, -1) for i = 1:simreps, j = 1:length(traps_per_cells), k = 1:surveillancereps];
@@ -129,7 +132,7 @@ And plot the results:
 plot(data.traps_per_cell, (data.area);
     ribbons=data.areasd,
     ylims=(0, 1.3e5),
-    xlabel="Traps per 27km² cell",
+    xlabel="Traps per 9km² cell",
     ylabel="Area invaded at detection (km²)",
     label="Simulation mean",
 )

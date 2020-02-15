@@ -5,12 +5,7 @@ author : Rafael Schouten, James Maino
 
 # Growth rate calculation
 
-In this example we will calculate the expected population growth rates of
-Spotted Wing Drosophila (SWD) _D. suzukii_, for each month of the year on a 9km grid
-accross North America.
-
-We'll subsample down to using just one day per month so the model runs really fast.
-
+In this example we will calculate the expected population growth rates of our species.
 
 ## Load some required packages
 
@@ -34,13 +29,13 @@ When defining model components, the first parameter is a `:symbol` for the
 required raster layer in the source data.
 
 ```julia; results=hidden
-p = 0.17
-ΔH_A = 15588.0cal/mol
-ΔH_H = 73744.0cal/mol
-Thalf_H = 307.6K
-ΔH_L = 73744.0cal/mol
-Thalf_L = 500.0K
-T_ref = K(27.0°C)
+p = 3.626804e-01
+ΔH_A = 3.586625e4cal/mol
+ΔH_H = 1.431237e5
+Thalf_H = 2.988454e2K
+ΔH_L = -1.108988e5cal/mol
+Thalf_L = 2.459949e2K
+T_ref = K(25.0°C)
 growthmodel = SchoolfieldIntrinsicGrowth(p, ΔH_A, ΔH_L, Thalf_L, ΔH_H, Thalf_H, T_ref)
 growth = Layer(:surface_temp, growthmodel)
 ```
@@ -54,16 +49,12 @@ p = plot(x -> GrowthMaps.rate(growth, x), temprange; label="growth rate")
 
 ## Load spatial data
 
-Later we can use real SMAP datasets using GeoData.jl SMAPseries loader.
-But downloading the dataset takes too long for an example.
-Instead we will download and unzip some lower ress monthly SMAP data to use in the model:
+Using the monthly aggregated SMAP dataset
 
 ```julia; results=hidden
-dataurl = "https://media.githubusercontent.com/media/cesaraustralia/GrowthMaps.jl/data/SMAP_aggregated27km.zip"
-zipfilepath = joinpath(basedir, "data", "SMAP_aggregated27km.zip")
-unzippedfolder = joinpath(basedir, "data", "SMAP_aggregated27km")
-# isfile(zipfilepath) || download(dataurl, zipfilepath)
-# run(`unzip -o $zipfilepath -d $unzippedfolder`)
+using HDF5
+smap_folder = joinpath(basedir, "data", "SMAP_aggregated")
+series = SMAPseries(smap_folder)
 ```
 
 
@@ -130,16 +121,32 @@ growthrates[Time(1:3:12)] |> plot
 Now define some stressors:
 
 ```julia; results=hidden
-coldthresh = 10.0°C |> K
-coldmort = -0.025 * K^-1
+# lowerSM  =  0 # no data
+# upperSM  =  0.8 # no data
+# upperSMm =  10# no data
+# lowerCT  = -10  # Enriquez2017
+# lowerCTm = log(1.23) # Stephens2015
+# lowerCTm = log(1.00) # testing no cold mortality
+# upperCT  = 30 # Kimura2004
+# upperCTm = log(1.15)
+
+# Critical minimum temperature, °C -10
+# Mortality rate per cold stress, °C/d 0.21
+# Critical maximum temperature, °C 35
+# Mortality rate per heat stress, °C/d 0.365
+# Critical wilting fraction, - 0.50
+# Mortality rate per desiccation stress, 1/d 4.6
+
+coldthresh = -10.0°C |> K
+coldmort = log(1.23) * K^-1
 coldstress = Layer(:surface_temp, ColdStress(coldthresh, coldmort))
 
-heatthresh = 40.0°C |> K
-heatmort = -0.12 * K^-1
+heatthresh = 30.0°C |> K
+heatmort = log(1.15)
 heatstress = Layer(:surface_temp, HeatStress(heatthresh, heatmort))
 
-wiltthresh = 0.1
-wiltmort = -0.2;
+wiltthresh = 0.5
+wiltmort = 4.6 log(1.1)
 wiltstress = Layer(:land_fraction_wilting, WiltStress(wiltthresh, wiltmort));
 ```
 We can try tweaking the fitting the model manually in a user interface.
@@ -290,7 +297,7 @@ growthrates = NCDarray("data/growthrates.ncd")
 plot(growthrates[GeoData.Time(1:3:12)]; clims=(0.0, 0.11), axis=false, legend=false, title="")
 savefig("output/population_growth_quarters.png")
 
-meangrowth = @set mean(growthrates, dims=Time).name = "Population increase per month"
+meangrowth = @set mean(growthrates, dims=Time).name = "Population growth rate potential (1/d)"
 p = plot(meangrowth;
     clims=(0.0, 0.15),
     title="Fall Armyworm mean growth rate"
@@ -299,7 +306,7 @@ scatter!(p, occurrence;
     markersize=0.3,
     markeralpha=0.7,
     markerstrokecolor=:lightgreen,
-    markercolor=:lightgreen,
+    markercolor=:green,
     markershape=:circle,
     label="observations"
 )
@@ -309,8 +316,3 @@ savefig("output/population_growth_mean.png")
 Now, if you need to use the model for a serious application, run it on the real
 SMAP dataset. GeoData.jl has a `SMAPseries()` constructor that will automate the
 whole process of loading real SMAP HDF5 files.
-
-```julia
-# using HDF5
-# series = SMAPseries(folder_path)
-```
