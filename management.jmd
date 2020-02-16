@@ -68,7 +68,7 @@ And define our ruleset:
 
 ```{julia; results=hidden}
 detectionruleset = MultiRuleset(
-   rulesets=(population=localdispersalruleset,),
+   rulesets=(population=dispersalruleset,),
    interactions=(detection, locresponse, regionalresponse),
    init=manageinit,
    mask=data(boolmask),
@@ -156,8 +156,26 @@ fullinit = (
 )
 ```
 
+
 ```{julia; results=hidden}
-function fullruleset(eradication_effect, local_effect, regional_effect, trap_density)
+fullprocessor = LayoutProcessor(
+   [:population :detected; :loc :region; :cost nothing],
+   (viridis, jet, oranges, blues, oranges)
+)
+fullruleset = build_fullruleset(eradication_effects[3], local_quarantine_effects[3], regional_quarantine_effects[3], trap_densities[3])
+tspan = DateTime(2020, 1), DateTime(2030, 12)
+output = GtkOutput(fullinit;
+   fps=100,
+   store=true,
+   processor=fullprocessor,
+   minval=(minimum(growthrates_zeromissing), nothing, nothing, nothing, 0.0),
+   maxval=(1e6, nothing, nothing, nothing, 1e8),
+)
+sim!(output, fullruleset; tspan=tspan)
+```
+
+```{julia; results=hidden}
+function build_fullruleset(eradication_effect, local_effect, regional_effect, trap_density)
    meantraps = 0.3
    detection_rate = 0.0041
    trap_coverage = 0.1
@@ -212,18 +230,18 @@ function fullruleset(eradication_effect, local_effect, regional_effect, trap_den
        #scalar=0.0, #TODO,
    #)
    local_quarantine_impact = 0.5
-   loc_quarantine_cost = DynamicCost(;
+   local_quarantine_cost = DynamicCost(;
        inputgrid=:loc,
        costgrid=:cost,
        cellvalue=cropvalue,
        scalar=local_quarantine_impact / 12, # Scale from years to months
    )
-   region_quarantine_impact = 0.5
-   region_quarantine_cost = DynamicCost(;
+   regional_quarantine_impact = 0.5
+   regional_quarantine_cost = DynamicCost(;
        inputgrid=:region,
        costgrid=:cost,
        cellvalue=cropvalue,
-       scalar= region_quarantine_impact / 12, # Scale from years to months
+       scalar= regional_quarantine_impact / 12, # Scale from years to months
    )
    costpertrap=1000.0
    trapcost = FixedCost(;
@@ -260,13 +278,13 @@ trange = tspan[1]:timestep:tspan[2]
 nframes = length(trange)
 local_quarantine_effects    = [0.0, 0.5, 0.99]
 regional_quarantine_effects = [0.0, 0.5, 0.99]
-trap_density                = [0.1, 0.01, 0.001]
+trap_densities              = [0.1, 0.05, 0.01, 0.005, 0.001]
 eradication_effects         = [0.0, 0.5, 0.99]
-nreps = 3
+nreps = 20
 detection_threshold = 1e4
 mem = ReentrantLock() # For locking the dataframe while threading
 
-sensitivity = DataFrame(
+sensitivity = [DataFrame(
    incursion = Symbol[],
    eradication = Float64[],
    local_quarantine = Float64[],
@@ -275,29 +293,29 @@ sensitivity = DataFrame(
    replicate = Int[],
    area = Float64[],
    cost = Float64[],
-)
-#(loc, point) in zip(keys(incursionpoints), incursionpoints),
-(loc, point) = first(zip(keys(incursionpoints), incursionpoints))
-for e in eradication_effects,
+) for thread in Threads.nthreads()]
+# (loc, point) = first(zip(keys(incursionpoints), incursionpoints))
+for (loc, point) in zip(keys(incursionpoints), incursionpoints),
+    e in eradication_effects,
     l in local_quarantine_effects,
     r in regional_quarantine_effects,
-    t in trap_density
-   println("running: ", (incursion=loc, eradication=e, loc_quarantine=l, reg_quarantine=r, nreps=nreps))
+    t in trap_densities
+   println("running: ", (incursion=loc, eradication=e, loc_quarantine=l, reg_quarantine=r, trap_density=t, nreps=nreps))
    Threads.@threads for rep in 1:nreps
       output = ArrayOutput(fullinit, nframes)
-      ruleset = fullruleset(e, l, r, t)
+      ruleset = buil_fullruleset(e, l, r, t)
       fullinit[:population] .= 0.0
       fullinit[:population][Lat(Near(point[1])), Lon(Near(point[2]))] = carrycap
       sim!(output, ruleset; tspan=tspan)
       area = count(x -> x > detection_threshold, output[end][:population])
       cost = sum(output[end][:cost])
-      lock(mem)
-      push!(sensitivity, (loc, e, l, r, t, rep, area, cost))
-      unlock(mem)
+      push!(sensitivity[Threads.threadid()], (loc, e, l, r, t, rep, area, cost))
    end
    yield()
 end
-CSV.write("output/sensitivity.csv", sensitivity)
+for i in 1:Threads.nthreads()
+   CSV.write("output/sensitivity$i.csv", sensitivity[i])
+end
 ```
 
 Plot using facets in R
@@ -308,6 +326,9 @@ R"""
 library(ggplot2)
 library(dplyr)
 library(magrittr)
+"""
+
+R"""
 for (i in incursions)
    output %>%
    filter(incursion==i)
