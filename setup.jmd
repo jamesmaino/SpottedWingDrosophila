@@ -1,4 +1,4 @@
-## Setup
+# Setup
 
 First, load the required packages. Dates is a core julia package that
 give us date/time handling, GeoData simplifies the loading of geospatial
@@ -7,9 +7,8 @@ NetCDF and GeoTiff files, respectively.
 
 ```{julia; results=hidden}
 using DimensionalData, GeoData, ArchGDAL, Dispersal, Biosecurity
-using DynamicGridsGtk
 using Setfield, Statistics, Dates, Plots, Unitful
-using DimensionalData: setdim, rebuild
+using DimensionalData: setdim, rebuild, Between
 basedir = ""
 gr()
 ```
@@ -79,7 +78,7 @@ From HDF5:
 
 ```julia; results=hidden
 statespath = "data/aus_states.tif"
-states = GDALarray(statespath)[Band(1)] |> permutedims |> x -> replace_missing(x, 0)
+states = GDALarray(statespath; name="States")[Band(1)] |> permutedims |> x -> replace_missing(x, 0)
 states |> plot
 ```
 
@@ -105,7 +104,8 @@ growthratesvec = (A -> A[Band(1), aust...]).(grtifs)
 growthtimespan = DateTime(2017,1):Month(1):DateTime(2017,12)
 growthrates = cat(growthratesvec...; dims=Ti(growthtimespan)) |>
     x->permutedims(x, (Lat, Lon, Ti))
-growthrates[Ti(1)] |> plot
+plot(growthrates[Ti(3)])
+dims(growthrates)
 # Remove missing values from the growthrates array. We don't want them to propagate through the simulation.
 growthrates_zeromissing = replace_missing(growthrates, 0.0)
 growthmask = rebuild(boolmask, mean(growthrates_zeromissing; dims=Ti)[Ti(1)] .* boolmask .> 0)
@@ -124,8 +124,6 @@ plot(mean(growthrates; dims=GeoData.Time()); clims=(0, 0.15))
 ```
 
 
-
-
 ```julia; results=hidden
 cropvaluepath = "data/clum_crop_value_cea.tif"
 cropvalue = GDALarray(cropvaluepath)[Band(1)] |> permutedims |> x -> replace_missing(x, 0.0)
@@ -136,7 +134,6 @@ cropmask |> plot
 @assert all(dims(cropvalue, Lat).val .≈ dims(growthrates, Lat).val)
 @assert all(dims(cropvalue, Lon).val .≈ dims(growthrates, Lon).val)
 ```
-
 
 
 
@@ -225,10 +222,21 @@ lat, lon = incursionpoints[:Brisbane]
 populationgrid[Lat(Near(lat)), Lon(Near(lon))] = carrycap
 layergrid = zero(populationgrid)
 costgrid = zero(populationgrid)
-localgrid = BitArray(populationgrid .* 0)
-juristictiongrid = BitArray(populationgrid .* 0)
+# juristictiongrid = BitArray(populationgrid .* 0)
 detectedgrid = BitArray(populationgrid .* 0)
+init_trapgrid!(trapgrid, incursionpoints) = begin
+    trapgrid .= detectionsites(cropmask, 0.01)
+    for (lat, lon) in incursionpoints
+        trapgrid[Lat(Near(lat)), Lon(Near(lon))] = 2
+    end
+    trapgrid
+end
+#trapgrid = GeoArray(populationgrid; data=zeros(Int, size(populationgrid)))
+init_trapgrid!(trapgrid, incursionpoints)
+plot(trapgrid)
 ```
+
+
 
 ### Define a combined ruleset
 
@@ -244,10 +252,7 @@ dispersalruleset = Ruleset(
 
 ## Output
 
-The simplest and most performant output for a simulation is an ArrayOutput,
-which simply writes the simulation to a preallocated array without visualising
-it.
-
+Define some color processors to use in live simuulations.
 
 ```{julia; results=hidden}
 using ColorSchemes, Colors
