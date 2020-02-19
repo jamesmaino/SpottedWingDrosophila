@@ -225,13 +225,12 @@ costgrid = zero(populationgrid)
 # juristictiongrid = BitArray(populationgrid .* 0)
 detectedgrid = BitArray(populationgrid .* 0)
 init_trapgrid!(trapgrid, incursionpoints) = begin
-    trapgrid .= detectionsites(cropmask, 0.01)
     for (lat, lon) in incursionpoints
         trapgrid[Lat(Near(lat)), Lon(Near(lon))] = 2
     end
     trapgrid
 end
-#trapgrid = GeoArray(populationgrid; data=zeros(Int, size(populationgrid)))
+trapgrid = GeoArray(populationgrid; data=fill(-1, size(populationgrid)))
 init_trapgrid!(trapgrid, incursionpoints)
 plot(trapgrid)
 ```

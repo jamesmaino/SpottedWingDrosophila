@@ -148,34 +148,30 @@ managementruleset = MultiRuleset(
 Now setup up a sensitivity analysis testing impacts of various management responses.
 
 ```{julia; results=hidden}
-function build_fullruleset(eradication_effect, local_effect, juristiction_effect, trap_density, trap_radius)
+function build_fullruleset(eradication_effect, local_effect, trap_density, trap_radius, reporting_threshold)
    detection_rate = 0.0041
    trap_coverage = 0.1
    trap_operation_cost = 1000.0
    juristiction_scalar = 0.5
    croploss_fraction = 0.1
-   croploss_threshold = 1e4
+   croploss_threshold = 1.0
    eradication_costperkm = 1000u"km^-2"
    cell_mean_traps = trap_density * cellkms
 
-   detectionmode = ProbabilisticDetection(detection_rate, trap_coverage)
    localdispersalruleset = Ruleset(localdisp, allee, growth)
-   detection = Biosecurity.DynamicDetection(;
+   trapmode = ProbabilisticDetectionMode(detection_rate, trap_coverage)
+   trap_detection = Biosecurity.TrapDetection(;
       traps=:traps,
       detected=:detected,
       population=:population,
-      detectionmode=detectionmode,
+      detectionmode=trapmode,
    )
-   #locresponse = NeighborhoodResponse(;
-      #controlgrid=:detected,
-      #targetgrid=:loc,
-      #neighborhood=RadialNeighborhood{response_radius}(),
-   #)
-   #juristictionresponse = RegionResponse(;
-      #controlgrid=:detected,
-      #targetgrid=:juristiction,
-      #regions=states,
-   #)
+   thresholdmode = ThresholdDetectionMode(reporting_threshold)
+   late_detection = Biosecurity.Detection(;
+      detected=:detected,
+      population=:population,
+      detectionmode=thresholdmode,
+   )
    settraps = Biosecurity.SetTraps(;
       detectedgrid=:detected,
       trapgrid=:traps,
@@ -189,13 +185,19 @@ function build_fullruleset(eradication_effect, local_effect, juristiction_effect
       region_quarantine=:traps, # Hack - this is commented out in Bosecurity.jl
       rule=humandisp,
       local_effect=local_effect,
-      region_effect=juristiction_effect,
+      region_effect=0.0,
    )
+   #eradication = ControlledMap(
+      #targetgrid=:population,
+      #controlgrid=:detected,
+      #f=*,
+      #val=1-eradication_effect,
+   #)
    eradication = ControlledMap(
       targetgrid=:population,
       controlgrid=:detected,
-      f=*,
-      val=1-eradication_effect,
+      f=min,
+      val=(1-eradication_effect) * carrycap,
    )
 
    # Costs
@@ -218,18 +220,29 @@ function build_fullruleset(eradication_effect, local_effect, juristiction_effect
        cellvalue=cropvalue,
        scalar=local_effect / 12, # Convert from years to months (the timestep)
    )
+   #trap_cost = DynamicCost(;
+       #inputgrid=:traps,
+       #costgrid=:cost,
+       #cellvalue=trap_operation_cost / 12, # Scale from years to months,
+       #scalar=1,
+   #)
+   trap_cost = PartialMap(
+      write=:cost,
+      read=Tuple{:traps,:cost},
+      f=(traps, cost) -> begin
+          if traps > 0
+             cost + traps * trap_operation_cost / 12
+          else
+             cost
+          end
+      end,
+   )
    #juristiction_quarantine_cost = DynamicCost(;
          #inputgrid=:juristiction,
          #costgrid=:cost,
          #cellvalue=cropvalue,
          #scalar= juristiction_scalar * juristiction_effect / 12, # Scale from years to months
    #)
-   trap_cost = DynamicCost(;
-       inputgrid=:traps,
-       costgrid=:cost,
-       cellvalue=trap_operation_cost / 12, # Scale from years to months,
-       scalar=1,
-   )
 
    # Ruleset
    MultiRuleset(;
@@ -238,9 +251,11 @@ function build_fullruleset(eradication_effect, local_effect, juristiction_effect
       ),
       interactions=(
          settraps,
-         detection,
+         trap_detection,
+         late_detection,
          eradication,
          croploss_cost,
+         eradication_cost,
          local_quarantine_cost,
          trap_cost,
          quarantine,
@@ -249,6 +264,24 @@ function build_fullruleset(eradication_effect, local_effect, juristiction_effect
       mask=boolmask,
       timestep=timestep
    )
+end
+
+randominit!(population, (lat, lon), growthmask) = begin
+   population .= 0.0
+   randomjump = 5
+   i, j = DimensionalData.dims2indices(dims(population), (Lat(Near(lat)), Lon(Near(lon))))
+   sze = size(population)
+   i2, j2 = i, j
+   for x in 1:100
+      i2 = i + rand(0:randomjump)
+      j2 = j + rand(0:randomjump)
+      if i2 > 0 && i2 < sze[1] && j2 > 0 && j2 < sze[2] && growthmask[i2, j2]
+         break
+      end
+   end
+   println("attempted incursion: ", (i2, j2))
+   population[i2, j2] = carrycap
+   i2, j2
 end
 ```
 
@@ -270,10 +303,10 @@ Set up a Gtk output:
 ```{julia; results=hidden}
 using DynamicGridsGtk
 output = GtkOutput(fullinit;
-   fps=20,
+   fps=8,
    store=true,
    processor=fullprocessor,
-   minval=(zero(carrycap), nothing, 0, 0.0),
+   minval=(zero(carrycap), nothing, -1, 0.0),
    maxval=(carrycap, nothing, 2, 1e6),
 )
 ```
@@ -281,26 +314,24 @@ output = GtkOutput(fullinit;
 And run a simulation in it:
 
 ```{julia; results=hidden}
-point = incursionpoints[:Brisbane]
-fullinit[:population] .= 0.0
-fullinit[:population][Lat(Near(point[1])), Lon(Near(point[2]))] = carrycap
-fullinit[:cost] .= 0.0
+fullinit[:cost] .= 0
+randominit!(fullinit[:population], incursionpoints[:Adelaide], growthmask)
 init_trapgrid!(fullinit[:traps], incursionpoints)
 #fullinit[:traps] .= rand(0:1, size(trapgrid)...)
 #maximum(fullinit[:traps])
-tspan = DateTime(2020, 1), DateTime(2045, 1)
+tspan = DateTime(2020, 1), DateTime(2025, 1)
 trange = tspan[1]:timestep:tspan[2]
 nframes = length(trange)
 
-trap_density        = 0.001u"km^-2"
-trap_radius          = 2
-juristiction_effect = 0.5
-local_effect        = 0.99
-eradication_effect  = 0.5
+trap_density        = 0.01u"km^-2"
+trap_radius         = 4
+local_effect        = 0.9
+eradication_effect  = 0.9
+reporting_threshold  = carrycap / 2
 
-fullruleset = build_fullruleset(eradication_effect, local_effect, juristiction_effect, trap_density, trap_radius)
+fullruleset = build_fullruleset(eradication_effect, local_effect, trap_density,
+                                trap_radius, reporting_threshold)
 sim!(output, fullruleset; tspan=tspan)
-savegif("trap_feedback.gif", output)
 ```
 
 
@@ -318,8 +349,13 @@ local_quarantine_effects    = [0.0, 0.5, 0.99]
 trap_densities              = [0.01, 0.05, 0.1] .* u"km^-2"
 trap_radii                  = [1, 2, 5]
 
-nreps = 20
-detection_threshold = 1e4
+eradication_effects         = [0.0, 0.99]
+local_quarantine_effects    = [0.0, 0.99]
+#juristiction_quarantine_effects = [0.0, 0.5, 0.99]
+trap_densities              = [0.01, 0.1] .* u"km^-2"
+trap_radii                  = [1, 5]
+
+nreps = 10
 
 sensitivity = [DataFrame(
    incursion = Symbol[],
@@ -328,30 +364,33 @@ sensitivity = [DataFrame(
    trap_density =  Float64[],
    trap_radii =  Int[],
    replicate = Int[],
+   timestep = Int[],
    area = Float64[],
    cost = Float64[],
 ) for thread in 1:Threads.nthreads()]
 
-#(lo, point) = :Brisbane, incursionpoints[:Brisbane]
+loc, point = :Melbourne, incursionpoints[:Melbourne]
 
-for (loc, point) in zip(keys(incursionpoints), incursionpoints),
-    (trapsource, trapmask) in ((:growth, growthmask),),#, (:crops, cropmask)),
+for #(loc, point) in zip(keys(incursionpoints), incursionpoints),
     e in eradication_effects,
     l in local_quarantine_effects,
     t in trap_densities,
     r in trap_radii
    println("running: ", (incursion=loc, eradication=e, loc_quarantine=l, trap_radius=r, trap_density=t, nreps=nreps))
    Threads.@threads for rep in 1:nreps
-      ruleset = build_fullruleset(e, l, 0.0, t, r)
-      fullinit[:population] .= 0.0
+      # Initialise
+      randominit!(fullinit[:population], point, growthmask)
+      init_trapgrid!(fullinit[:traps], incursionpoints)
       fullinit[:cost] .= 0.0
-      fullinit[:population][Lat(Near(point[1])), Lon(Near(point[2]))] = carrycap
-      trapgrid = init_trapgrid!(fullinit[:traps], incursionpoints)
       output = ArrayOutput(fullinit, nframes)
+
+      ruleset = build_fullruleset(e, l, t, r, reporting_threshold)
       sim!(output, ruleset; tspan=tspan)
-      area = count(x -> x > 0.0, output[end][:population]) * cellkms / u"km^2"
-      cost = sum(output[end][:cost])
-      push!(sensitivity[Threads.threadid()], (loc, e, l, t*u"km^2", r, rep, area, cost))
+      for f in 1:length(output)
+         area = count(x -> x > 0.0, output[f][:population]) * cellkms / u"km^2"
+         cost = sum(output[f][:cost])
+         push!(sensitivity[Threads.threadid()], (loc, e, l, t*u"km^2", r, rep, f, area, cost))
+      end
    end
    yield()
 end
