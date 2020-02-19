@@ -47,19 +47,13 @@ Finally, define the function to running replicate simulations with
 different trapping grids.
 
 ```{julia; results=hidden}
-function trapping_reps!(areaoutput, ruleset, suithort, traps_per_cells, detection_per_timestep,
-    initpop, gridsize, simlen, simreps, surveillancereps)
-    init = similar(suithort, Float64)
-    output = ArrayOutput(init, simlen)
+function trapping_reps!(areaoutput, ruleset, popgrid, location, tspan,
+    traps_per_cells, detection_per_timestep, gridsize, simreps, surveillancereps)
+    simlen = length(tspan[1]:ruleset.timestep:tspan[2])
+    init_popgrid!(popgrid, incursionpoints[location])
+    output = ArrayOutput(popgrid, simlen)
     for i = 1:simreps
-        # Convert hort suitability to a probability vector
-        initprob = vec(suithort ./ sum(suithort))
-        initvec = rand(Multinomial(1, initprob)) .* initpop
-        # Copy init to the probability array
-        for i in eachindex(initvec)
-            init[i] = initvec[i]
-        end
-        sim!(output, ruleset; init=init, tspan=tspan)
+        sim!(output, ruleset; init=popgrid, tspan=tspan)
         for j = 1:length(traps_per_cells)
             for k = 1:surveillancereps
                 println((i, j, k))
@@ -73,11 +67,11 @@ end
 ```
 
 ```{julia; results=hidden}
-simreps = 100
+simreps = 10
 traps_per_cells = 1 ./ 10 .^ (-1:0.1:1)
 surveillancereps = 10
 starttime = DateTime(2021, 1)
-stoptime = DateTime(2022, 12)
+stoptime = DateTime(2023, 1)
 timestep = dispersalruleset.timestep
 tspan = starttime, stoptime
 detections = 0.0052 # mean rate of detection for 93 m trapping radius from Kirkpatrick 2018 across mean([27, 48]) = 37.5 d
@@ -85,20 +79,24 @@ surveylen = 37.5u"d"
 utimestep = 365.25u"d" / 12
 detection_per_timestep = detections / surveylen * utimestep
 gridsize = 9, 9
-simlen = length(starttime:timestep:stoptime)
-
-hort = map(x -> x > 0 ? 1 : 0, cropvalue)
-size(hort)
-suit = map(x -> x > 0 ? 1 : 0, mean(growthrates_zeromissing; dims=Time)[Ti(1)])
-for lat in dims(suit, Lat), lon in dims(suit, Lon)
-    suit[Lat(At(lat)), Lon(Near(lon))] *= hort[Lat(Near(lat)), Lon(Near(lon))]
-end
-suit |> plot
 
 const TupleOrMissingTuple = Union{Tuple{Missing,Missing},Tuple{Float64,Float64}}
-areaoutput = TupleOrMissingTuple[(-1, -1) for i = 1:simreps, j = 1:length(traps_per_cells), k = 1:surveillancereps];
-trapping_reps!(areaoutput, dispersalruleset, suithort, traps_per_cells,
-               detection_per_timestep, carrycap, gridsize, simlen, simreps, surveillancereps)
+
+df = DataFrame(
+    [Symbol,Float32,Float32,Float32,Float32,Float32],
+    [:location, :time, :traps_per_cell, :timesd, :area, :areasd],
+    length(traps_per_cells) * length(incursionpoints)
+)
+
+areaoutputs = [
+    TupleOrMissingTuple[(-1.0, -1.0) for i = 1:simreps, j = 1:length(traps_per_cells), k = 1:surveillancereps] for loc in keys(incursionpoints)
+]
+
+for i in 1:length(incursionpoints)
+    trapping_reps!(areaoutputs[i], dispersalruleset, populationgrid, keys(incursionpoints)[i], tspan, traps_per_cells,
+               detection_per_timestep, gridsize, simreps, surveillancereps)
+end
+
 ```
 
 Now we will organise the data into a DataFrame that we can save
@@ -107,30 +105,27 @@ the standard deviation.
 
 
 ```{julia; results=hidden}
-data = DataFrame(
-    [Float32,Float32,Float32,Float32,Float32,Float32],
-    [:time, :timesd, :area, :areasd, :areamin, :areamax],
-    length(traps_per_cells)
-)
-data.traps_per_cell = traps_per_cells
-for j in eachindex(traps_per_cells)
-    println(j)
-    detection_time = map(x->x[1], areaoutput[:,j,:])
-    area_invaded = map(x->x[2], areaoutput[:,j,:])
-    data[j, :time] = mean(skipmissing(detection_time))
-    data[j, :timesd] = std(skipmissing(detection_time))
-    data[j, :area] = mean(skipmissing(area_invaded))
-    data[j, :areasd] = std(skipmissing(area_invaded))
-    data[j, :areamin] = data[j, :area] - data[j, :areasd]
-    data[j, :areamax] = data[j, :area] + data[j, :areasd]
+for j in eachindex(traps_per_cells), loc in 1:length(incursionpoints)
+    location = keys(incursionpoints)[loc]
+    println((location, j))
+    detection_time = map(x->x[1], areaoutputs[loc][:,j,:])
+    area_invaded = map(x->x[2], areaoutputs[loc][:,j,:])
+    j2 = j + (loc - 1) * length(traps_per_cells)
+    df[j2, :location] = location
+    df[j2, :traps_per_cell] = traps_per_cells[j]
+    df[j2, :time] = mean(skipmissing(detection_time))
+    df[j2, :timesd] = std(skipmissing(detection_time))
+    area = mean(skipmissing(area_invaded))
+    df[j2, :area] = area
+    df[j2, :areasd] = std(skipmissing(area_invaded))
 end
 ```
 
 And plot the results:
 
 ```{julia; results=hidden}
-plot(data.traps_per_cell, (data.area);
-    ribbons=data.areasd,
+plot(df.traps_per_cell, (df.area);
+    ribbons=df.areasd,
     ylims=(0, 1.3e5),
     xlabel="Traps per 9km² cell",
     ylabel="Area invaded at detection (km²)",
@@ -140,6 +135,6 @@ plot(data.traps_per_cell, (data.area);
 
 ```{julia; results=hidden}
 savefig("output/trapping_efficacy")
-CSV.write("output/trapping_efficacy.csv",  data)
+CSV.write("output/trapping_efficacy.csv",  df)
 # data = CSV.read("output/simulation_summary.csv")
 ```

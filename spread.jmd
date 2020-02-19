@@ -14,7 +14,7 @@ Set up a simple rule that just copies the growthrate layer to a grid so that
 we can view it next to the simulation.
 
 ```{julia; results=hidden}
-tspan = DateTime(2020, 1), DateTime(2020, 12)
+tspan = DateTime(2020, 1), DateTime(2021, 1)
 layercopy = Ruleset(LayerCopy(layer=growthrates_zeromissing))
 init2 = (population=populationgrid, layer=layergrid)
 multiruleset = MultiRuleset(
@@ -82,7 +82,7 @@ Set up the simulation:
 
 ```{julia; results=hidden}
 starttime = DateTime(2020, 1)
-stoptime = DateTime(2020, 12)
+stoptime = DateTime(2021, 1)
 tspan = starttime, stoptime
 trange = starttime:timestep:stoptime
 init = zero(populationgrid)
@@ -151,10 +151,11 @@ reflects the mean number of cells invaded for an incursion commenced at that cel
 
 
 ```{julia; results=hidden}
-nreps =
+nreps = 10
 scale = 50
-cellsinvaded = aggregate(populationgrid, scale=10)
-@set! cellsinvaded.name = "Cells invaded"
+cellsinvaded6 = GeoData.aggregate(populationgrid, scale=10)
+@set! cellsinvaded6.name = "Cells invaded"
+cellsinvaded12 = deepcopy(cellsinvaded6)
 init = deepcopy(populationgrid)
 ```
 
@@ -167,12 +168,15 @@ for i = 1:scale:size(cellsinvaded, 1) * scale,
         println(i,", ", j)
         init .= 0
         init[i, j] = carrycap
-        invaded = 0
+        invaded6 = 0
+        invaded12 = 0
         for k in 1:nreps
             sim!(output, dispersalruleset; init=init, tspan=tspan)
-            invaded += sum(output[end] .> 0)
+            invaded6 += count(x -> x > zero(x), output[7])
+            invaded12 += count(x -> zero(x), output[13])
         end
-        cellsinvaded[(i - 1) ÷ scale + 1, (j - 1) ÷ scale + 1] = invaded / nreps
+        cellsinvaded6[(i - 1) ÷ scale + 1, (j - 1) ÷ scale + 1] = invaded / nreps
+        cellsinvaded12[(i - 1) ÷ scale + 1, (j - 1) ÷ scale + 1] = invaded / nreps
     end
 end
 ```
@@ -181,12 +185,13 @@ Now plot:
 
 ```{julia; results=hidden}
 area = cellsinvaded .* 9*9*1e-6 .*  aggregate(missingmask, scale=scale)
-plot(area; colorbar_title="Area invaded from incursion pt. (million km²)", title="Area invaded after 2 years")
+plot(area; colorbar_title="Area invaded from incursion pt. (million km²)", title="Area invaded after 12 months")
 ```
 
 And save the output:
 
 ```{julia; results=hidden}
 savefig("output/cellsinvaded$(nreps)reps.png")
-write("output/cellsinvaded$(nreps)reps.tif", NCDarray, cellsinvaded)
+write("output/cellsinvaded_6months_$(nreps)reps.tif", NCDarray, cellsinvaded6)
+write("output/cellsinvaded_12months_$(nreps)reps.tif", NCDarray, cellsinvaded12)
 ```

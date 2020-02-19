@@ -254,10 +254,10 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
          trap_detection,
          late_detection,
          eradication,
-         croploss_cost,
-         eradication_cost,
-         local_quarantine_cost,
-         trap_cost,
+   #      croploss_cost,
+   #      eradication_cost,
+   #      local_quarantine_cost,
+   #      trap_cost,
          quarantine,
       ),
       init=fullinit,
@@ -357,6 +357,11 @@ trap_radii                  = [1, 5]
 
 nreps = 10
 
+trap_operation_cost = 1000.0
+croploss_fraction = 0.1
+croploss_threshold = 1.0
+eradication_costperkm = 1000u"km^-2"
+
 sensitivity = [DataFrame(
    incursion = Symbol[],
    eradication = Float64[],
@@ -366,7 +371,10 @@ sensitivity = [DataFrame(
    replicate = Int[],
    timestep = Int[],
    area = Float64[],
-   cost = Float64[],
+   c_traps = Float64[],
+   c_eradication = Float64[],
+   c_quarantine = Float64[],
+   c_industry = Float64[],
 ) for thread in 1:Threads.nthreads()]
 
 loc, point = :Melbourne, incursionpoints[:Melbourne]
@@ -388,8 +396,11 @@ for #(loc, point) in zip(keys(incursionpoints), incursionpoints),
       sim!(output, ruleset; tspan=tspan)
       for f in 1:length(output)
          area = count(x -> x > 0.0, output[f][:population]) * cellkms / u"km^2"
-         cost = sum(output[f][:cost])
-         push!(sensitivity[Threads.threadid()], (loc, e, l, t*u"km^2", r, rep, f, area, cost))
+         c_traps = sum(output[f][:traps]) * trap_operation_cost
+         c_eradication = sum(output[f][:detected] .* eradication_costperkm .* cellkms)
+         c_quarantine = sum(output[f][:detected] .* cropvalue)
+         c_industry = sum(output[f][:population] .> 0 .* cropvalue .* croploss_fraction)
+         push!(sensitivity[Threads.threadid()], (loc, e, l, t*u"km^2", r, rep, f, area, c_traps, c_eradication, c_quarantine, c_industry))
       end
    end
    yield()

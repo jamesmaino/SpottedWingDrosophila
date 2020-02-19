@@ -217,9 +217,12 @@ values with something else Dispersal.jl init can't contain `missing` or it will 
 
 ```{julia; results=hidden}
 populationgrid = replace_missing(zero(growthrates[GeoData.Time(1)]), NaN)
+init_popgrid!(popgrid, (lat, lon)) = begin
+   popgrid .= 0.0
+   popgrid[Lat(Near(lat)), Lon(Near(lon))] = carrycap
+end
+init_popgrid!(populationgrid, incursionpoints[:Brisbane])
 # Using `Near` finds the nearest cell to the coordinates
-lat, lon = incursionpoints[:Brisbane]
-populationgrid[Lat(Near(lat)), Lon(Near(lon))] = carrycap
 layergrid = zero(populationgrid)
 costgrid = zero(populationgrid)
 # juristictiongrid = BitArray(populationgrid .* 0)
