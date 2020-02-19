@@ -198,17 +198,13 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
       #f=min,
       #val=(1-eradication_effect) * carrycap,
    #)
-   eradication = PartialMap(
-      write=:population,
-      read=Tuple{:traps,:detected,:population},
-      f=(traps, detected, population) -> begin
-          if detected && traps > 0
-             min(population, (1-eradication_effect) * carrycap)
-          else
-             population
-          end
-      end,
-   )
+   eradication = PartialMap{:population,Tuple{:traps,:detected,:population}}() do traps, detected, population
+       if detected && traps > 0
+          min(population, (1-eradication_effect) * carrycap)
+       else
+          population
+       end
+   end
 
 
    # Costs
@@ -349,24 +345,22 @@ sim!(output, fullruleset; tspan=tspan)
 Run replicates:
 
 ```{julia; results=hidden}
-# Run for 5 years!!!!
-tspan = DateTime(2020, 1), DateTime(2022, 1)
+# Run for 3 years!!!!
+tspan = DateTime(2020, 1), DateTime(2023, 1)
 trange = tspan[1]:timestep:tspan[2]
 nframes = length(trange)
 trapmask = growthmask
 
 eradication_effects         = [0.0, 0.5, 0.99, 0.9999, 0.999999]
 local_quarantine_effects    = [0.0, 0.5, 0.99, 0.9999]
-#juristiction_quarantine_effects = [0.0, 0.5, 0.99]
 trap_densities              = [0.0, 0.0001, 0.001, 0.01, 0.1, 1.0] .* u"km^-2"
-trap_densities              = [0.00001, 0.00001] .* u"km^-2"
 trap_radii                  = [1, 5, 10]
 
-eradication_effects         = [0.0, 0.9999]
-local_quarantine_effects    = [0.0, 0.9999]
-trap_radii                  = [1, 10]
+# eradication_effects         = [0.0, 0.9999]
+# local_quarantine_effects    = [0.0, 0.9999]
+# trap_radii                  = [1, 10]
 
-nreps = 10
+nreps = 30
 
 trap_operation_cost = 1000.0
 croploss_fraction = 0.1
@@ -388,9 +382,9 @@ sensitivity = [DataFrame(
    c_industry = Float64[],
 ) for thread in 1:Threads.nthreads()]
 
-loc, point = :Melbourne, incursionpoints[:Melbourne]
+#loc, point = :Melbourne, incursionpoints[:Melbourne]
 
-@time for #(loc, point) in zip(keys(incursionpoints), incursionpoints),
+@time for (loc, point) in zip(keys(incursionpoints), incursionpoints),
     e in eradication_effects,
     l in local_quarantine_effects,
     t in trap_densities,
