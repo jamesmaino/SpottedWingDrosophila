@@ -349,6 +349,7 @@ sim!(output, fullruleset; tspan=tspan)
 Run replicates:
 
 ```{julia; results=hidden}
+# Run for 5 years!!!!
 tspan = DateTime(2020, 1), DateTime(2022, 1)
 trange = tspan[1]:timestep:tspan[2]
 nframes = length(trange)
@@ -358,7 +359,7 @@ eradication_effects         = [0.0, 0.5, 0.99, 0.9999, 0.999999]
 local_quarantine_effects    = [0.0, 0.5, 0.99, 0.9999]
 #juristiction_quarantine_effects = [0.0, 0.5, 0.99]
 trap_densities              = [0.0, 0.0001, 0.001, 0.01, 0.1, 1.0] .* u"km^-2"
-trap_densities              = [0.00001, 0.00001]
+trap_densities              = [0.00001, 0.00001] .* u"km^-2"
 trap_radii                  = [1, 5, 10]
 
 eradication_effects         = [0.0, 0.9999]
