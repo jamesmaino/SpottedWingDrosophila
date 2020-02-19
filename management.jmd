@@ -354,15 +354,14 @@ trange = tspan[1]:timestep:tspan[2]
 nframes = length(trange)
 trapmask = growthmask
 
-eradication_effects         = [0.0, 0.5, 0.99]
-local_quarantine_effects    = [0.0, 0.5, 0.99]
+eradication_effects         = [0.0, 0.5, 0.99, 0.9999]
+local_quarantine_effects    = [0.0, 0.5, 0.99, 0.9999]
 #juristiction_quarantine_effects = [0.0, 0.5, 0.99]
-trap_densities              = [0.0, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05] .* u"km^-2"
+trap_densities              = [0.0, 0.0001, 0.001, 0.01, 0.1, 1.0] .* u"km^-2"
 trap_radii                  = [1, 5, 10]
 
 eradication_effects         = [0.0, 0.9999]
 local_quarantine_effects    = [0.0, 0.9999]
-#juristiction_quarantine_effects = [0.0, 0.5, 0.99]
 trap_densities              = [0.001, 0.01, 0.1] .* u"km^-2"
 trap_radii                  = [1, 10]
 
@@ -407,10 +406,10 @@ loc, point = :Melbourne, incursionpoints[:Melbourne]
       sim!(output, ruleset; tspan=tspan)
       for f in 1:length(output)
          area = count(x -> x > 0.0, output[f][:population]) * cellkms / u"km^2"
-         c_traps = sum(output[f][:traps]) * trap_operation_cost / 12
-         c_eradication = sum(output[f][:traps] .> 0 .* output[f][:detected] .* eradication_costperkm .* cellkms .* e ./ 12)
+         c_traps = sum((output[f][:traps] .> 0) .* output[f][:traps] .* trap_operation_cost / 12)
+         c_eradication = sum((output[f][:traps] .> 0) .* output[f][:detected] .* eradication_costperkm .* cellkms .* e ./ 12)
          c_quarantine = sum(output[f][:detected] .* cropvalue .* l ./ 12)
-         c_industry = sum(output[f][:population] .>= 1 .* cropvalue ./ 12 .* croploss_fraction)
+         c_industry = sum((output[f][:population] .>= 1) .* cropvalue ./ 12 .* croploss_fraction)
          push!(sensitivity[Threads.threadid()], (loc, e, l, t*u"km^2", r, rep, f, area, c_traps, c_eradication, c_quarantine, c_industry))
       end
    end
