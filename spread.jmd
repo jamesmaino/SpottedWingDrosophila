@@ -151,9 +151,9 @@ reflects the mean number of cells invaded for an incursion commenced at that cel
 
 
 ```{julia; results=hidden}
-nreps = 10
-scale = 50
-cellsinvaded6 = GeoData.aggregate(populationgrid, scale=10)
+nreps = 10 #
+scale = 50 # 3
+cellsinvaded6 = GeoData.aggregate(populationgrid, scale=scale)
 @set! cellsinvaded6.name = "Cells invaded"
 cellsinvaded12 = deepcopy(cellsinvaded6)
 init = deepcopy(populationgrid)

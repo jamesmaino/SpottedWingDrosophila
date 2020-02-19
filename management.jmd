@@ -154,7 +154,6 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
    trap_operation_cost = 1000.0
    juristiction_scalar = 0.5
    croploss_fraction = 0.1
-   croploss_threshold = 1.0
    eradication_costperkm = 1000u"km^-2"
    cell_mean_traps = trap_density * cellkms
 
@@ -193,26 +192,49 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
       #f=*,
       #val=1-eradication_effect,
    #)
-   eradication = ControlledMap(
-      targetgrid=:population,
-      controlgrid=:detected,
-      f=min,
-      val=(1-eradication_effect) * carrycap,
+   #eradication = ControlledMap(
+      #targetgrid=:population,
+      #controlgrid=:detected,
+      #f=min,
+      #val=(1-eradication_effect) * carrycap,
+   #)
+   eradication = PartialMap(
+      write=:population,
+      read=Tuple{:traps,:detected,:population},
+      f=(traps, detected, population) -> begin
+          if detected && traps > 0
+             min(population, (1-eradication_effect) * carrycap)
+          else
+             population
+          end
+      end,
    )
 
+
    # Costs
+   trap_cost = PartialMap(
+      write=:cost,
+      read=Tuple{:traps,:cost},
+      f=(traps, cost) -> begin
+          if traps > 0
+             cost + traps * trap_operation_cost / 12
+          else
+             cost
+          end
+      end,
+   )
    croploss_cost = DynamicThresholdCost(;
        inputgrid=:population,
        costgrid=:cost,
        cellvalue=cropvalue,
        scalar=croploss_fraction / 12, # Scale from years to months
-       threshold=croploss_threshold,
+       threshold=1.0,
    )
    eradication_cost = DynamicCost(;
        inputgrid=:detected,
        costgrid=:cost,
-       cellvalue=cellkms * eradication_costperkm / 12,
-       scalar=1.0,
+       cellvalue=1.0,
+       scalar=cellkms * eradication_costperkm * eradication_effect / 12,
    )
    local_quarantine_cost = DynamicCost(;
        inputgrid=:detected,
@@ -226,17 +248,6 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
        #cellvalue=trap_operation_cost / 12, # Scale from years to months,
        #scalar=1,
    #)
-   trap_cost = PartialMap(
-      write=:cost,
-      read=Tuple{:traps,:cost},
-      f=(traps, cost) -> begin
-          if traps > 0
-             cost + traps * trap_operation_cost / 12
-          else
-             cost
-          end
-      end,
-   )
    #juristiction_quarantine_cost = DynamicCost(;
          #inputgrid=:juristiction,
          #costgrid=:cost,
@@ -254,11 +265,11 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
          trap_detection,
          late_detection,
          eradication,
-   #      croploss_cost,
-   #      eradication_cost,
-   #      local_quarantine_cost,
-   #      trap_cost,
          quarantine,
+#         croploss_cost,
+#         eradication_cost,
+#         local_quarantine_cost,
+#         trap_cost,
       ),
       init=fullinit,
       mask=boolmask,
@@ -315,7 +326,7 @@ And run a simulation in it:
 
 ```{julia; results=hidden}
 fullinit[:cost] .= 0
-randominit!(fullinit[:population], incursionpoints[:Adelaide], growthmask)
+randominit!(fullinit[:population], incursionpoints[:Melbourne], growthmask)
 init_trapgrid!(fullinit[:traps], incursionpoints)
 #fullinit[:traps] .= rand(0:1, size(trapgrid)...)
 #maximum(fullinit[:traps])
@@ -323,10 +334,10 @@ tspan = DateTime(2020, 1), DateTime(2025, 1)
 trange = tspan[1]:timestep:tspan[2]
 nframes = length(trange)
 
-trap_density        = 0.01u"km^-2"
-trap_radius         = 4
-local_effect        = 0.9
-eradication_effect  = 0.9
+trap_density        = 1e-2u"km^-2"
+trap_radius         = 1
+local_effect        = 0.0
+eradication_effect  = 0.9999999
 reporting_threshold  = carrycap / 2
 
 fullruleset = build_fullruleset(eradication_effect, local_effect, trap_density,
@@ -352,7 +363,7 @@ trap_radii                  = [1, 5, 10]
 eradication_effects         = [0.0, 0.9999]
 local_quarantine_effects    = [0.0, 0.9999]
 #juristiction_quarantine_effects = [0.0, 0.5, 0.99]
-trap_densities              = [0.0001, 0.001, 0.05] .* u"km^-2"
+trap_densities              = [0.001, 0.01, 0.1] .* u"km^-2"
 trap_radii                  = [1, 10]
 
 nreps = 10
@@ -396,10 +407,10 @@ loc, point = :Melbourne, incursionpoints[:Melbourne]
       sim!(output, ruleset; tspan=tspan)
       for f in 1:length(output)
          area = count(x -> x > 0.0, output[f][:population]) * cellkms / u"km^2"
-         c_traps = sum(output[f][:traps]) * trap_operation_cost
-         c_eradication = sum(output[f][:detected] .* eradication_costperkm .* cellkms .* e)
-         c_quarantine = sum(output[f][:detected] .* cropvalue .* l)
-         c_industry = sum(output[f][:population] .> 0 .* cropvalue .* croploss_fraction)
+         c_traps = sum(output[f][:traps]) * trap_operation_cost / 12
+         c_eradication = sum(output[f][:detected] .* eradication_costperkm .* cellkms .* e ./ 12)
+         c_quarantine = sum(output[f][:detected] .* cropvalue .* l ./ 12)
+         c_industry = sum(output[f][:population] .> 0 .* cropvalue ./ 12 .* croploss_fraction)
          push!(sensitivity[Threads.threadid()], (loc, e, l, t*u"km^2", r, rep, f, area, c_traps, c_eradication, c_quarantine, c_industry))
       end
    end
