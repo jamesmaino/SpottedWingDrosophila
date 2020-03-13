@@ -25,8 +25,8 @@ random distribution of traps in cells containing crops of value.
 meantraps = 0.3
 trap_coverage = 0.1
 detection_rate = 0.1
-detectionmode = ProbabilisticDetection(detection_rate, trap_coverage)
-detection = Detection(;
+detectionmode = ProbabilisticDetectionMode(detection_rate, trap_coverage)
+detection = Biosecurity.MaskedDetection(;
    population=:population,
    detected=:detected,
    sites=nothing,
@@ -39,7 +39,7 @@ detection = Detection(;
 Set the local and juristiction quarantine responses:
 
 ```julia; results=hidden
-response_radius = 1
+response_radius =1
 neighborhood = RadialNeighborhood{response_radius}()
 locresponse = NeighborhoodResponse(;
    controlgrid=:detected,
@@ -59,17 +59,14 @@ Now we can define the initial conditions grids.
 manageinit = (
    population=populationgrid,
    detected=detectedgrid,
-   loc=localgrid,
-   juristiction=juristictiongrid
 )
 ```
 
 And define our ruleset:
 
 ```{julia; results=hidden}
-detectionruleset = MultiRuleset(
-   rulesets=(population=dispersalruleset,),
-   interactions=(detection, locresponse, juristictionresponse),
+detectionruleset = Ruleset(
+   dispersalruleset.rules..., detection, locresponse, juristictionresponse;
    init=manageinit,
    mask=data(boolmask),
    timestep=timestep,
@@ -81,7 +78,7 @@ We use GtkOuput to run the simulation.
 ```{julia; results=hidden}
 using DynamicGridsGtk
 tspan = DateTime(2020, 1), DateTime(2030, 12)
-manageprocessor = LayoutProcessor([:population :detected; :loc :juristiction], (viridis, jet, oranges, blues))
+manageprocessor = LayoutProcessor([:population :detected], (viridis, jet, rainbow1, blues))
 output = GtkOutput(manageinit;
    fps=100,
    store=true,
@@ -95,20 +92,19 @@ sim!(output, detectionruleset; tspan=tspan)
 Now add an eradication model:
 
 ```{julia; results=hidden}
-eradication = ControlledMap(
-   targetgrid=:population,
-   controlgrid=:loc,
-   f=*,
-   val=0.5,
-)
-eradicationruleset = MultiRuleset(
-   rulesets=(population=dispersalruleset,),
-   interactions=(detection, locresponse, juristictionresponse, eradication),
+eradication = Map{Tuple{:traps,:detected,:population},:population}() do traps, detected, population
+    if detected && traps > 0
+       min(population, (1-eradication_effect) * carrycap)
+    else
+       population
+    end
+end
+eradicationruleset = Ruleset(
+   dispersalruleset.rules..., detection, locresponse, juristictionresponse, eradication;
    init=manageinit,
    mask=boolmask,
    timestep=timestep,
 )
-count(growthmask)
 ```
 
 And re-run the simulation with eradication in local quarantine areas:
@@ -124,26 +120,6 @@ output = GtkOutput(manageinit;
 sim!(output, eradicationruleset; tspan=tspan)
 ```
 
-Now add quarantine, for a full management simulation:
-
-```{julia; results=hidden}
-quarantine = QuarantinedHumanDispersal(;
-   population=:population,
-   local_quarantine=:loc,
-   juristiction_quarantine=:juristiction,
-   rule=humandisp,
-   local_effect=0.02,
-   juristiction_effect=0.02,
-)
-managementruleset = MultiRuleset(
-   rulesets=(population=localdispersalruleset,),
-   interactions=(quarantine, detection, locresponse, juristictionresponse, eradication),
-   init=manageinit,
-   mask=boolmask,
-   timestep=timestep,
-)
-```
-
 
 Now setup up a sensitivity analysis testing impacts of various management responses.
 
@@ -157,7 +133,6 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
    eradication_costperkm = 1000u"km^-2"
    cell_mean_traps = trap_density * cellkms
 
-   localdispersalruleset = Ruleset(localdisp, allee, growth)
    trapmode = ProbabilisticDetectionMode(detection_rate, trap_coverage)
    trap_detection = Biosecurity.TrapDetection(;
       traps=:traps,
@@ -178,7 +153,7 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
       meantraps=cell_mean_traps,
    )
    # Human disp is set up in spread.jmd
-   quarantine = QuarantinedHumanDispersal(;
+   quarantined_human_dispersal = QuarantinedHumanDispersal(;
       population=:population,
       local_quarantine=:detected,
       region_quarantine=:traps, # Hack - this is commented out in Bosecurity.jl
@@ -186,19 +161,7 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
       local_effect=local_effect,
       region_effect=0.0,
    )
-   #eradication = ControlledMap(
-      #targetgrid=:population,
-      #controlgrid=:detected,
-      #f=*,
-      #val=1-eradication_effect,
-   #)
-   #eradication = ControlledMap(
-      #targetgrid=:population,
-      #controlgrid=:detected,
-      #f=min,
-      #val=(1-eradication_effect) * carrycap,
-   #)
-   eradication = PartialMap{:population,Tuple{:traps,:detected,:population}}() do traps, detected, population
+   eradication = Map{Tuple{:traps,:detected,:population},:population}() do traps, detected, population
        if detected && traps > 0
           min(population, (1-eradication_effect) * carrycap)
        else
@@ -206,19 +169,14 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
        end
    end
 
-
    # Costs
-   trap_cost = PartialMap(
-      write=:cost,
-      read=Tuple{:traps,:cost},
-      f=(traps, cost) -> begin
-          if traps > 0
-             cost + traps * trap_operation_cost / 12
-          else
-             cost
-          end
-      end,
-   )
+   trap_cost = Map{Tuple{:traps,:cost},:cost}() do traps, cost
+       if traps > 0
+          cost + traps * trap_operation_cost / 12
+       else
+          cost
+       end
+   end
    croploss_cost = DynamicThresholdCost(;
        inputgrid=:population,
        costgrid=:cost,
@@ -238,35 +196,14 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
        cellvalue=cropvalue,
        scalar=local_effect / 12, # Convert from years to months (the timestep)
    )
-   #trap_cost = DynamicCost(;
-       #inputgrid=:traps,
-       #costgrid=:cost,
-       #cellvalue=trap_operation_cost / 12, # Scale from years to months,
-       #scalar=1,
-   #)
-   #juristiction_quarantine_cost = DynamicCost(;
-         #inputgrid=:juristiction,
-         #costgrid=:cost,
-         #cellvalue=cropvalue,
-         #scalar= juristiction_scalar * juristiction_effect / 12, # Scale from years to months
-   #)
 
    # Ruleset
-   MultiRuleset(;
-      rulesets=(
-         population=localdispersalruleset,
-      ),
-      interactions=(
-         settraps,
-         trap_detection,
-         late_detection,
-         eradication,
-         quarantine,
-#         croploss_cost,
-#         eradication_cost,
-#         local_quarantine_cost,
-#         trap_cost,
-      ),
+   Ruleset(
+      localdisp, allee, growth,
+      settraps, trap_detection, late_detection,
+      eradication, quarantined_human_dispersal,
+      croploss_cost, eradication_cost, local_quarantine_cost, trap_cost;
+
       init=fullinit,
       mask=boolmask,
       timestep=timestep
@@ -276,7 +213,7 @@ end
 randominit!(population, (lat, lon), growthmask) = begin
    population .= 0.0
    randomjump = 5
-   i, j = DimensionalData.dims2indices(dims(population), (Lat(Near(lat)), Lon(Near(lon))))
+   i, j = DimensionalData.dims2indices(dims(population), (Lat(Contains(lat)), Lon(Contains(lon))))
    sze = size(population)
    i2, j2 = i, j
    for x in 1:100
@@ -302,7 +239,7 @@ fullinit = (
 cellkms = (9u"km")^2
 fullprocessor = LayoutProcessor(
    [:population :detected; :traps :cost],
-   (viridis, jet, oranges, inferno)
+   (viridis, jet, autumn, inferno)
 )
 ```
 Set up a Gtk output:
@@ -310,11 +247,11 @@ Set up a Gtk output:
 ```{julia; results=hidden}
 using DynamicGridsGtk
 output = GtkOutput(fullinit;
-   fps=8,
+   fps=40,
    store=true,
    processor=fullprocessor,
-   minval=(zero(carrycap), nothing, -1, 0.0),
-   maxval=(carrycap, nothing, 2, 1e6),
+   minval=(zero(carrycap), nothing, 0, 0.0),
+   maxval=(carrycap, nothing, 3, 1e6),
 )
 ```
 
@@ -324,23 +261,25 @@ And run a simulation in it:
 fullinit[:cost] .= 0
 randominit!(fullinit[:population], incursionpoints[:Melbourne], growthmask)
 init_trapgrid!(fullinit[:traps], incursionpoints)
-#fullinit[:traps] .= rand(0:1, size(trapgrid)...)
+#fullinit[:traps] .=rand(0:1, size(trapgrid)...)
 #maximum(fullinit[:traps])
-tspan = DateTime(2020, 1), DateTime(2025, 1)
+tspan = DateTime(2020, 1), DateTime(2023, 1)
 trange = tspan[1]:timestep:tspan[2]
 nframes = length(trange)
 
 trap_density        = 1e-2u"km^-2"
-trap_radius         = 1
-local_effect        = 0.0
-eradication_effect  = 0.9999999
+trap_radius         = 2
+local_effect        = 0.5
+eradication_effect  = 0.5
 reporting_threshold  = carrycap / 2
 
-fullruleset = build_fullruleset(eradication_effect, local_effect, trap_density,
-                                trap_radius, reporting_threshold)
+fullruleset = build_fullruleset(eradication_effect, local_effect, trap_density, trap_radius, reporting_threshold)
 sim!(output, fullruleset; tspan=tspan)
 ```
-
+Save a gif:
+```{julia; results=hidden}
+savegif("management_sim_low.gif", output, fullruleset; fps=6, )
+```
 
 Run replicates:
 

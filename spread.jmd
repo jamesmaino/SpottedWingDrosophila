@@ -15,32 +15,27 @@ we can view it next to the simulation.
 
 ```{julia; results=hidden}
 tspan = DateTime(2020, 1), DateTime(2021, 1)
-layercopy = Ruleset(LayerCopy(layer=growthrates_zeromissing))
-init2 = (population=populationgrid, layer=layergrid)
-multiruleset = MultiRuleset(
-    rulesets=(
-        population=dispersalruleset,
-        layer=layercopy
-    ),
-    interactions=(),
-    init=init2,
-    mask=boolmask,
-    timestep=timestep
-);
 ```
-
 Run the simulation in a DynamicGridsGtk window:
 
 ```{julia; results=hidden}
 using DynamicGridsGtk
-multiprocessor = LayoutProcessor([:population :layer], (algae, inferno))
-output = GtkOutput(init2; ps=10, store=true, processor=multiprocessor,
-                   minval=(zero(carrycap), minimum(growthrates_zeromissing)),
-                   maxval=(carrycap, maximum(growthrates_zeromissing)))
+output = GtkOutput((population=populationgrid,);
+    store=true,
+    fps=50,
+    processor=inferno,
+    minval=zero(carrycap),
+    maxval=carrycap,
+)
 output.running = false
-output.fps = 6
-display(output)
-sim!(output, multiruleset; tspan=tspan);
+#files = "output/tiffs/" .* readdir("output/tiffs")
+#i = 821
+#GDALarray(files[i]; selectorcrs=EPSG(4326)) |> plot
+#lon, lat = parse.(Float64, match(r"cells_invaded_from_incusion_(.*)_(.*).tif", files[i]).captures)
+lon, lat = 153.01867219917017, -30.311826034712713
+populationgrid .= 0
+populationgrid[Lon(Contains(lon)), Lat(Contains(lat))] = carrycap
+sim!(output, dispersalruleset; init=(population=populationgrid,), tspan=tspan);
 ```
 And save it as a gif:
 
@@ -82,58 +77,52 @@ Set up the simulation:
 
 ```{julia; results=hidden}
 starttime = DateTime(2020, 1)
-stoptime = DateTime(2021, 1)
+stoptime = DateTime(2022, 1)
 tspan = starttime, stoptime
 trange = starttime:timestep:stoptime
 init = zero(populationgrid)
 output = ArrayOutput(init, length(trange))
-nreps = 10
+nreps = 100
 ```
-
 Set up the output grid (which can be smaller than the sim to save time)
 Now make some pathway plots for some key incursion points.
 
 And generate the plot.
 
 ```{julia; results=hidden
-function incursionplot(output, init, missingmask, key, (lat, lon), nreps, starttime, stoptime, timestep)
+function incursionplot(output, init, missingmask, key, (lat, lon), nreps, tspan, timestep)
     println(key)
-    len = length(starttime:timestep:stoptime)
-    init .= 0
-    init[Lat(Near(lat)), Lon(Near(lon))] = carrycap
-    stepped = similar(output[1], Int)
-    @set! stepped.refdims = ()
-    @set! stepped.name = "Time at establishment (months)"
-    stepped .= 0
+    len = length(tspan[1]:timestep:tspan[2])
+    init[:population] .= 0
+    init[:population][Lat(Contains(lat)), Lon(Contains(lon))] = carrycap
+    steps_established = similar(output[1][:population], Int)
+    steps_established .= 0
+    @set! steps_established.refdims = ()
+    @set! steps_established.name = "Months established"
     for rep in 1:nreps
-        sim!(output, dispersalruleset; init=init, tspan=(starttime, stoptime))
+        sim!(output, dispersalruleset; init=init, tspan=tspan)
         println("rep: ", rep)
-        for f in eachindex(output)
-            o = output[f]
-            for j in size(stepped, 2), i in size(stepped, 1)
-                val = stepped[i, j]
-                if val == 0 && o[i, j] > 0
-                    stepped[i, j] = val + len - f - 1
-                end
-            end
+        map(output) do step
+            steps_established .+= step[:population] .>= 1
         end
     end
-    plot(stepped ./ nreps .* missingmask; color=:inferno, xlabel="", ylabel="", title=key)
+    println("maximum: ", maximum(steps_established))
+    plot(steps_established ./ nreps .* missingmask; color=:inferno, xlabel="", ylabel="", title=key)
 end
 ```
 
 ```{julia; results=hidden}
-init = zero(populationgrid)
-output = ArrayOutput(init, len)
+init = (population=zero(populationgrid),)
+output = ArrayOutput(init, length(trange))
 plots = []
-@profiler for (key, loc) in zip(keys(incursionpoints), incursionpoints)
-    push!(plots, incursionplot(output, init, missingmask, key, loc, nreps, starttime, stoptime, timestep))
+for (key, loc) in zip(keys(incursionpoints), incursionpoints)
+    push!(plots, incursionplot(output, init, missingmask, key, loc, nreps, tspan, timestep))
 end
 ```
 
 ```{julia; results=hidden}
 plot(plots...; size=(1000, 600))
-savefig("output/incursionpathways.png")
+savefig("output/months_established.png")
 ```
 
 We can also save the plots as individual figures.
@@ -141,7 +130,7 @@ We can also save the plots as individual figures.
 ```{julia; results=hidden}
 for (i, key) in enumerate(keys(incursionpoints))
     plot(plots[i])
-    savefig("output/incursionpathway_$key.png")
+    savefig("output/months_established_$key.png")
 end
 ```
 
@@ -151,34 +140,60 @@ reflects the mean number of cells invaded for an incursion commenced at that cel
 
 
 ```{julia; results=hidden}
-nreps = 10 #
-scale = 3
+nreps = 1 #
+scale = 2
 cellsinvaded6 = GeoData.aggregate(populationgrid, scale=scale)
 @set! cellsinvaded6.name = "Cells invaded"
 cellsinvaded12 = deepcopy(cellsinvaded6)
 init = deepcopy(populationgrid)
+tspan_summer = DateTime(2020, 1), DateTime(2021, 1)
+tspan_winter = DateTime(2020, 7), DateTime(2021, 7)
+init = zero(populationgrid)
 ```
 
 Then loop over the aggregated grid:
 
 ```{julia; results=hidden}
-for i = 1:scale:size(cellsinvaded12, 1) * scale,
-    j = 1:scale:size(cellsinvaded12, 2) * scale
-    if boolmask[i, j]
-        println(i,", ", j)
-        init .= 0
-        init[i, j] = carrycap
-        invaded6 = 0
-        invaded12 = 0
-        for k in 1:nreps
-            sim!(output, dispersalruleset; init=init, tspan=tspan)
-            invaded6 += count(x -> x > zero(x), output[7])
-            invaded12 += count(x -> x > zero(x), output[13])
+rm("output/tiffs"; recursive=true)
+mkdir("output/tiffs")
+build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, boolmask, missingmask, nreps, scale, tspan, timestep, season) = begin
+    londim, latdim = dims(init, (Lon, Lat))
+    latindex = reverse(val(latdim))
+    trange = tspan[1]:timestep:tspan[2]
+    Threads.@threads for i = 1:scale:size(cellsinvaded12, 1) * scale
+        output = ArrayOutput(init, length(trange))
+        acc = similar(init, UInt8)
+        acc .= 0
+        @set! acc.missingval = 0x00
+        threadinit = deepcopy(init)
+        for j = 1:scale:size(cellsinvaded12, 2) * scale
+            boolmask[i, j] || continue
+            checkbounds(Bool, acc, i, j) || continue
+            lat, lon = ArchGDAL.reproject([[londim[j], latindex[i]]], crs(init), selectorcrs(init))[1]
+            acc .= 0
+            threadinit .= 0
+            threadinit[i, j] = carrycap
+            invaded6 = 0
+            invaded12 = 0
+            for k in 1:nreps
+                sim!(output, dispersalruleset; init=threadinit, tspan=tspan)
+                invaded6 += count(x -> x > one(x), output[7])
+                count12 = count(x -> x > one(x), output[13])
+                invaded12 += count12
+                acc .+= output[13] .> 0
+            end
+            cellsinvaded6[(i - 1) ÷ scale + 1, (j - 1) ÷ scale + 1] = invaded6 / nreps
+            cellsinvaded12[(i - 1) ÷ scale + 1, (j - 1) ÷ scale + 1] = invaded12 / nreps
+            if invaded12 > 0
+                println("plot: ", (lat, lon))
+                println(maximum(acc))
+                GeoData.write("output/tiffs/cells_invaded_from_$(lon)_$(lat)_$season.tif", GDALarray, acc)
+            end
         end
-        cellsinvaded6[(i - 1) ÷ scale + 1, (j - 1) ÷ scale + 1] = invaded6 / nreps
-        cellsinvaded12[(i - 1) ÷ scale + 1, (j - 1) ÷ scale + 1] = invaded12 / nreps
     end
 end
+@time build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, boolmask, missingmask, nreps, scale, tspan_summer, timestep, "summer")
+@time build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, boolmask, missingmask, nreps, scale, tspan_winter, timestep, "winter")
 ```
 
 Now plot:

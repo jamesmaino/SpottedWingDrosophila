@@ -14,7 +14,6 @@ These packages take care of loading and plotting data, and handling sci units an
 ```julia; results=hidden
 using GrowthMaps, Plots, Unitful, UnitfulRecipes, Dates, Setfield, Statistics
 using ArchGDAL, NCDatasets, GeoData
-using GeoData: Time
 using Unitful: °C, K, cal, mol
 basedir = ""
 ```
@@ -31,7 +30,7 @@ required raster layer in the source data.
 ```julia; results=hidden
 p = 3.626804e-01
 ΔH_A = 3.586625e4cal/mol
-ΔH_H = 1.431237e5
+ΔH_H = 1.431237e5cal/mol
 Thalf_H = 2.988454e2K
 ΔH_L = -1.108988e5cal/mol
 Thalf_L = 2.459949e2K
@@ -43,7 +42,7 @@ growth = Layer(:surface_temp, growthmodel)
 Now plot the growth rate curve:
 
 ```julia; results=hidden
-temprange = 270.0:0.1:320.0
+temprange = (270.0:0.1:320.0)u"K"
 p = plot(x -> GrowthMaps.rate(growth, x), temprange; label="growth rate")
 ```
 
@@ -52,15 +51,16 @@ p = plot(x -> GrowthMaps.rate(growth, x), temprange; label="growth rate")
 Using the monthly aggregated SMAP dataset
 
 ```julia; results=hidden
-using HDF5
-smap_folder = joinpath(basedir, "data", "SMAP_aggregated")
-series = SMAPseries(smap_folder)
+#using HDF5
+#smap_folder = joinpath(basedir, "data", "SMAP_aggregated")
+#series = SMAPseries(smap_folder)
 ```
 
 
 Get the paths for to all the wilting and surface temp files using `filter`:
 
 ```julia; results=hidden
+unzippedfolder = "/home/raf/Work/cesar/Data/Raster/SMAP_1_and_16_for_2016/SMAP_based_layers"
 filenames = readdir(unzippedfolder);
 wilting_filenames = filter(fn -> occursin(r"land_fraction_wilting", fn), filenames)
 surface_temp_filenames = filter(fn -> occursin(r"surface_temp", fn), filenames)
@@ -92,7 +92,7 @@ end
 stacks = [makestack(i) for i in 1:length(surface_temp_paths)]
 startdate = dates[1]
 enddate = dates[end] + Hour(3)
-timedim = GeoData.Time(dates; grid=RegularGrid(;step=Hour(3)))
+timedim = Ti(dates; grid=RegularGrid(;step=Hour(3)))
 series = GeoSeries(stacks, (timedim,));
 ```
 
@@ -100,7 +100,7 @@ series = GeoSeries(stacks, (timedim,));
 We can plot a layer from a file at some date in the series:
 
 ```julia; results=hidden
-series[GeoData.Time(Near(DateTime(2016, 1)))][:surface_temp] |> plot
+series[Ti(Contains(DateTime(2016, 1)))][:surface_temp] |> plot
 ```
 
 First we'll run this basic growth model:
@@ -115,7 +115,7 @@ growthrates = mapgrowth(growth, series;
                    subperiod=subperiod,
                    startdate=startdate
                   )
-growthrates[Time(1:3:12)] |> plot
+growthrates[Ti(1:3:12)] |> plot
 ```
 
 Now define some stressors:
@@ -190,7 +190,7 @@ growthrates = mapgrowth(model, series;
                    subperiod=subperiod,
                    startdate=startdate
                   )
-growthrates[Time(1:3:12)] |> plot
+growthrates[Ti(1:3:12)] |> plot
 ```
 
 ## Compare with observation data
@@ -209,7 +209,7 @@ occurrence = collect(zip(obs.X, obs.Y))
 
 And scatter them on the growthrates map:
 ```julia; results=hiddeats
-p = growthrates[GeoData.Time(1)] |> plot
+p = growthrates[GeoData.Ti(1)] |> plot
 scatter!(p, occurrence; markersize=2.0, markercolor=:white, markershape=:circle, label="obs")
 ```
 
@@ -276,7 +276,7 @@ growthrates = mapgrowth(model, series;
                    subperiod=subperiod,
                    startdate=startdate
                   );
-plot(growthrates[GeoData.Time(1:3:12)]; clims=(0.0, 0.15), axis=false)
+plot(growthrates[Ti(1:3:12)]; clims=(0.0, 0.15), axis=false)
 ```
 
 This is ready to use for projecting growthrates, or in a dispersal
@@ -294,10 +294,10 @@ We can load the data again with:
 pyplot()
 growthrates = NCDarray("data/growthrates.ncd")
 
-plot(growthrates[GeoData.Time(1:3:12)]; clims=(0.0, 0.11), axis=false, legend=false, title="")
+plot(growthrates[Ti(1:3:12)]; clims=(0.0, 0.11), axis=false, legend=false, title="")
 savefig("output/population_growth_quarters.png")
 
-meangrowth = @set mean(growthrates, dims=Time).name = "Population growth rate potential (1/d)"
+meangrowth = @set mean(growthrates, dims=Ti).name = "Population growth rate potential (1/d)"
 p = plot(meangrowth;
     clims=(0.0, 0.15),
     title="Fall Armyworm mean growth rate"
