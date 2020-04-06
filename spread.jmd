@@ -28,13 +28,10 @@ output = GtkOutput((population=populationgrid,);
     maxval=carrycap,
 )
 output.running = false
-#files = "output/tiffs/" .* readdir("output/tiffs")
-#i = 821
-#GDALarray(files[i]; selectorcrs=EPSG(4326)) |> plot
-#lon, lat = parse.(Float64, match(r"cells_invaded_from_incusion_(.*)_(.*).tif", files[i]).captures)
 lon, lat = 153.01867219917017, -30.311826034712713
 populationgrid .= 0
 populationgrid[Lon(Contains(lon)), Lat(Contains(lat))] = carrycap
+
 sim!(output, dispersalruleset; init=(population=populationgrid,), tspan=tspan);
 ```
 And save it as a gif:
@@ -141,14 +138,13 @@ reflects the mean number of cells invaded for an incursion commenced at that cel
 
 ```{julia; results=hidden}
 nreps = 1 #
-scale = 2
+scale = 50
 cellsinvaded6 = GeoData.aggregate(populationgrid, scale=scale)
 @set! cellsinvaded6.name = "Cells invaded"
 cellsinvaded12 = deepcopy(cellsinvaded6)
-init = deepcopy(populationgrid)
 tspan_summer = DateTime(2020, 1), DateTime(2021, 1)
 tspan_winter = DateTime(2020, 7), DateTime(2021, 7)
-init = zero(populationgrid)
+init = (population=zero(populationgrid),)
 ```
 
 Then loop over the aggregated grid:
@@ -156,44 +152,51 @@ Then loop over the aggregated grid:
 ```{julia; results=hidden}
 rm("output/tiffs"; recursive=true)
 mkdir("output/tiffs")
-build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, boolmask, missingmask, nreps, scale, tspan, timestep, season) = begin
-    londim, latdim = dims(init, (Lon, Lat))
+build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, boolmask, missingmask, nreps, scale, timestep, tspan, season) = begin
+    londim, latdim = dims(init[:population], (Lon, Lat))
     latindex = reverse(val(latdim))
     trange = tspan[1]:timestep:tspan[2]
-    Threads.@threads for i = 1:scale:size(cellsinvaded12, 1) * scale
-        output = ArrayOutput(init, length(trange))
-        acc = similar(init, UInt8)
+    outputs = [ArrayOutput(init, length(trange)) for t in 1:Threads.nthreads()]
+    simdata = [DynamicGrids.SimData(init, dispersalruleset, first(tspan)) for t in 1:Threads.nthreads()]
+    inits = [deepcopy(init) for t in 1:Threads.nthreads()]
+    #Threads.@threads
+    for i = 1:scale:size(cellsinvaded12, 1) * scale
+        acc = similar(init[:population], UInt8)
         acc .= 0
         @set! acc.missingval = 0x00
-        threadinit = deepcopy(init)
+        threadinit = inits[Threads.threadid()]
+        threaddata = simdata[Threads.threadid()]
+        threadoutput = outputs[Threads.threadid()]
         for j = 1:scale:size(cellsinvaded12, 2) * scale
+            println("i, j: ", (i, j))
             boolmask[i, j] || continue
             checkbounds(Bool, acc, i, j) || continue
-            lat, lon = ArchGDAL.reproject([[londim[j], latindex[i]]], crs(init), selectorcrs(init))[1]
+            lat, lon = ArchGDAL.reproject([[londim[j], latindex[i]]], crs(init[:population]), selectorcrs(init[:population]))[1]
             acc .= 0
-            threadinit .= 0
-            threadinit[i, j] = carrycap
+            inits[Threads.threadid()][:population] .= 0
+            inits[Threads.threadid()][:population][i, j] = carrycap
             invaded6 = 0
             invaded12 = 0
             for k in 1:nreps
-                sim!(output, dispersalruleset; init=threadinit, tspan=tspan)
-                invaded6 += count(x -> x > one(x), output[7])
-                count12 = count(x -> x > one(x), output[13])
+                sim!(threadoutput, dispersalruleset;
+                     init=threadinit, tspan=tspan, simdata=threaddata)
+
+                invaded6 += count(x -> x > one(x), threadoutput[7][:population])
+                count12 = count(x -> x > one(x), threadoutput[13][:population])
                 invaded12 += count12
-                acc .+= output[13] .> 0
+                acc .+= threadoutput[13][:population] .> 0
             end
             cellsinvaded6[(i - 1) ÷ scale + 1, (j - 1) ÷ scale + 1] = invaded6 / nreps
             cellsinvaded12[(i - 1) ÷ scale + 1, (j - 1) ÷ scale + 1] = invaded12 / nreps
             if invaded12 > 0
-                println("plot: ", (lat, lon))
-                println(maximum(acc))
                 GeoData.write("output/tiffs/cells_invaded_from_$(lon)_$(lat)_$season.tif", GDALarray, acc)
             end
         end
     end
 end
-@time build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, boolmask, missingmask, nreps, scale, tspan_summer, timestep, "summer")
-@time build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, boolmask, missingmask, nreps, scale, tspan_winter, timestep, "winter")
+bm = collect(boolmask)
+@profiler build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, bm, missingmask, nreps, scale, timestep, tspan_summer, "summer")
+@time build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, bm, missingmask, nreps, scale, timestep, tspan_winter, "winter")
 ```
 
 Now plot:
@@ -216,5 +219,5 @@ write("output/cellsinvaded_12months_$(nreps)reps.ncd", NCDarray, cellsinvaded12)
 
 A = NCDarray("output/cellsinvaded_12months_$(nreps)reps.ncd")
 A = NCDarray("output/cellsinvaded_6months_$(nreps)reps.ncd")
-plot(A)
+# plot(A)
 ```

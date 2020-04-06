@@ -8,7 +8,7 @@ NetCDF and GeoTiff files, respectively.
 ```{julia; results=hidden}
 using DimensionalData, GeoData, ArchGDAL, Dispersal, Biosecurity
 using Setfield, Statistics, Dates, Plots, Unitful
-using DimensionalData: setdim, rebuild, Between
+using DimensionalData: setdims, rebuild, Between
 basedir = ""
 gr()
 ```
@@ -55,7 +55,7 @@ Load the growthrates layer from netcdf:
 #growthrates = NCDarray(growthratesfilepath)[aust...] |>
     #x->permutedims(x, (Lat, Lon, Ti)) |>
     #x->reverse(x; dims=Lat) |>
-    #x->setdim(x, rebuild(dims(x, Ti); grid=RegularGrid(; step=Month(1))))
+    #x->setdims(x, rebuild(dims(x, Ti); grid=RegularGrid(; step=Month(1))))
 ```
 
 From HDF5:
@@ -75,7 +75,7 @@ From HDF5:
 
 ```julia; results=hidden
 statespath = "data/aus_states.tif"
-states = GDALarray(statespath; name="States", selectorcrs=EPSG(4326))[Band(1)] |>
+states = GDALarray(statespath; name="States", usercrs=EPSG(4326))[Band(1)] |>
     permutedims |> x -> replace_missing(x, 0)[aust...]
 states |> plot
 splitstates = (
@@ -108,8 +108,9 @@ crops = (
     :total,
 )
 croparray(crop) = GDALarray("data/cropvalue/cea_crop_value_$crop.tif";
-                             selectorcrs=EPSG(4326))[Band(1), aust...] |> permutedims
+                             usercrs=EPSG(4326))[Band(1), aust...] |> permutedims
 cropvalues = NamedTuple{crops}(Tuple(croparray(crop) for crop in crops))
+cropvalues[:plums] |> plot
 ```
 
 ### Define masking layers
@@ -130,10 +131,10 @@ From multiple tif files:
 ```{julia; eval=false}
 growthrates_filenames = ["data/growthrates_tifs/limited_growth_2017_$n.tif"
                             for n in lpad.(string.(1:12), 2, "0")]
-grtifs = GDALarray.(growthrates_filenames; name="Growth Rate", selectorcrs=EPSG(4326))
+grtifs = GDALarray.(growthrates_filenames; name="Growth Rate", usercrs=EPSG(4326))
 growthratesvec = (A -> A[Band(1), aust...]).(grtifs)
 growthtimespan = DateTime(2017,1):Month(1):DateTime(2017,12)
-growthrates = cat(growthratesvec...; dims=Ti(growthtimespan; grid=RegularGrid())) |>
+growthrates = cat(growthratesvec...; dims=Ti(growthtimespan)) |>
     x->permutedims(x, (Lat, Lon, Ti))
 plot(growthrates[Ti(3)])
 # Remove missing values from the growthrates array. We don't want them to propagate through the simulation.
@@ -156,8 +157,8 @@ plot(mean(growthrates; dims=Ti()); clims=(0, 0.15))
 
 
 ```julia; results=hidden
-cropvaluepath = "data/clum_crop_value_cea.tif"
-cropvalue = GDALarray(cropvaluepath; selectorcrs=EPSG(4326))[Band(1)] |>
+cropvaluepath = "data/cropvalue/cea_crop_value_total.tif"
+cropvalue = GDALarray(cropvaluepath; usercrs=EPSG(4326))[Band(1)] |>
     permutedims |> x -> replace_missing(x, 0.0)[aust...]
 cropvalue |> plot
 cropmask = boolmask .* cropvalue
@@ -221,7 +222,7 @@ a shortlist of dispersal destinations for each cell.
 
 ```{julia; results=hidden}
 human_pop_path = joinpath(basedir, "data/population_density.tif")
-human_pop = GDALarray(human_pop_path; selectorcrs=EPSG(4326))[Band(1), aust...] |>
+human_pop = GDALarray(human_pop_path; usercrs=EPSG(4326))[Band(1), aust...] |>
             permutedims |> replace_missing
 human_pop |> plot
 
@@ -239,7 +240,7 @@ scale = 8
 )
 humandisp.dest_shortlists
 
-I = DimensionalData.dims2indices(states, (Lat(Contains(-36.805896)), Lon(Contains(143.959527)))) .÷ scale
+I = (DimensionalData.dims2indices(states, (Lat(Contains(-36.805896)), Lon(Contains(143.959527)))) .-1) .÷ scale .+ 1
 melb_dests = Dispersal.populate!(zero(human_pop), humandisp, I...)
 plot(replace(melb_dests, 0 => missing), title="Melbourne destinations")
 savefig("output/human_dispersal_destinations.png")
@@ -275,9 +276,9 @@ plot(trapgrid)
 ### Define a combined ruleset
 ```{julia; results=hidden}
 dispersalruleset = Ruleset(
-    humandisp, localdisp, allee, growth;
+    humandisp, Chain(localdisp, allee, growth);
     init=populationgrid,
-    mask=boolmask,
+    mask=collect(boolmask),
     timestep=timestep
 );
 ```

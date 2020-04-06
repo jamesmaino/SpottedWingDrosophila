@@ -57,7 +57,7 @@ output = GtkOutput(costinit;
     minval=(0.0, 0.0),
     maxval=(carrycap, 1e7)
 )
-@profiler sim!(output, costruleset; tspan=tspan)
+@time sim!(output, costruleset; tspan=tspan)
 ```
 
 And save it as a gif:
@@ -79,64 +79,72 @@ dataframes = [DataFrame(
     replicate = Int[],
 ) for thread in 1:Threads.nthreads()]
 alldata = nothing
-nreps = 1
+nreps = 10
 ```
 
 ```julia
-for (incursioncity, (lat, lon)) in zip(keys(incursionpoints), incursionpoints)
-    costgrid = GeoArray(zero(populationgrid); name="cost")
-    regioncropvalue = GeoArray(zero(populationgrid); name="regional crop value")
-    cumcost = GeoArray(zero(costgrid))
-    popgrid = GeoArray(zero(populationgrid); name="population")
-    popgrid[Lat(Contains(lat)), Lon(Contains(lon))] = carrycap
-    initgrids = (population=popgrid, cost=costgrid)
-    output = ArrayOutput(initgrids, length(timerange))
-    utimestep = 365.25u"d" / 12
-    croploss = Biosecurity.DynamicThresholdCost(;
-        inputgrid=:population,
-        costgrid=:cost,
-        cellvalue=regioncropvalue,
-        scalar=0.1/365u"d" * utimestep,
-    )
-    ruleset = Ruleset(
-        humandisp, localdisp, allee, growth, croploss;
-        init=initgrids,
-        mask=boolmask,
-        timestep=timestep,
-    )
-    for rep in 1:nreps
-        print(rep, " ")
-        sim!(output, ruleset; tspan=tspan)
-        for (statename, statemask) in zip(keys(splitstates), splitstates),
-            (cropname, cropvalue) in zip(keys(cropvalues), cropvalues)
-            regioncropvalue .= cropvalue .* statemask
-            println("incursion: $incursioncity costs from: $statename for $cropname")
-            threshold=1e4
-            cumcost .= 0.0
-            costs = map(output) do o
-                cumcost .+= o[:population] .> threshold .* regioncropvalue
-                sum(cumcost)
-            end
-            for i in 1:length(output)
-                push!(dataframes[Threads.threadid()], (incursioncity, statename, cropname, costs[i], i, rep))
+#Threads.@threads
+function build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, populationgrid, timerange, humandisp, localdisp, allee, growth)
+    for (incursioncity, (lat, lon)) in collect(zip(keys(incursionpoints), incursionpoints))
+        costgrid = GeoArray(zero(populationgrid); name="cost")
+        regioncropvalue = GeoArray(zero(populationgrid); name="regional crop value")
+        cumcost = GeoArray(similar(populationgrid)) .= 0
+        popgrid = GeoArray(zero(populationgrid); name="population")
+        popgrid[Lat(Contains(lat)), Lon(Contains(lon))] = carrycap
+        initgrids = (population=popgrid, cost=costgrid)
+        output = ArrayOutput(initgrids, length(timerange))
+        utimestep = 365.25u"d" / 12
+        tspan = timerange[1], timerange[end]
+        croploss = Biosecurity.DynamicThresholdCost(;
+            inputgrid=:population,
+            costgrid=:cost,
+            cellvalue=regioncropvalue,
+            scalar=0.1/365u"d" * utimestep,
+        )
+        ruleset = Ruleset(
+            humandisp, localdisp, allee, growth, croploss;
+            init=initgrids,
+            mask=boolmask,
+            timestep=step(timerange),
+        )
+        for rep in 1:nreps
+            print(rep, " ")
+            sim!(output, ruleset; tspan=tspan)
+            #println((tspan, DynamicGrids.timestep(ruleset)))
+            #display(output[26])
+
+            println(sum(output[26]))
+            for (statename, statemask) in zip(keys(splitstates), splitstates),
+                (cropname, cropvalue) in zip(keys(cropvalues), cropvalues)
+                regioncropvalue .= cropvalue .* statemask
+                println("incursion: $incursioncity costs from: $statename for $cropname")
+                threshold=1e4
+                cumcost .= 0.0
+                costs = zeros(length(output))
+                for i in eachindex(output)
+                    cumcost .+= (output[i][:population] .> threshold) .* regioncropvalue
+                    costs[i] = sum(cumcost)
+                end
+                filepath = "output/costs/$(cropname)_$(statename)_cost_for_$(incursioncity)_incursion.tif"
+                write(filepath, GDALarray, cumcost)
+                for i in 1:length(output)
+                    push!(dataframes[Threads.threadid()], (incursioncity, statename, cropname, costs[i], i, rep))
+                end
             end
         end
     end
 end
 
-df = DataFrame(name=repeat(["John", "Sally", "Kirk"],inner=[1],outer=[2]),
-     age=vcat([10., 20., 30.],[10., 20., 30.].+3),
-     children=repeat([3,2,2],inner=[1],outer=[2]),state=[:a,:a,:a,:b,:b,:b])
-
-x = @from i in df begin
-    @group i by i.state into g
-    @select {group=key(g),mage=mean(g.age), oldest=maximum(g.age), youngest=minimum(g.age)}
-    @collect DataFrame
-end
+sim!(output, ruleset; tspan=tspan)
+build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, populationgrid, timerange, humandisp, localdisp, allee, growth)
+output = length(timerange)
+cropvalues[3] .* splitstates[3] |> plot
+GDALarray("output/costs/cherries_NSW_cost_for_Cairns_incursion.tif"; selectorcrs=EPSG(4326)) |> plot
+impactsdata = vcat(dataframes...)
+CSV.write("output/impacts.csv", impactsdata)
 ```
 
 ```julia; results=hidden
-alldata = vcat(dataframes...)
 meandata = @from i in alldata begin
           @where i.state==:QLD
           @where i.incursion==:Cairns
@@ -145,8 +153,6 @@ meandata = @from i in alldata begin
           @colect DataFrame
 end
 meandata |> @df scatter(:timestep, :meancost)
-
-CSV.write("output/impacts.csv", alldata)
 labels = permutedims(string.([keys(incursionpoints)...], Ref(" incursion")))
 plot(timerange, outputs;
     title = "Crop losses to Drosophila suzukii",
