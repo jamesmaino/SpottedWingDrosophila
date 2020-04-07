@@ -31,7 +31,6 @@ output.running = false
 lon, lat = 153.01867219917017, -30.311826034712713
 populationgrid .= 0
 populationgrid[Lon(Contains(lon)), Lat(Contains(lat))] = carrycap
-
 sim!(output, dispersalruleset; init=(population=populationgrid,), tspan=tspan);
 ```
 And save it as a gif:
@@ -67,7 +66,7 @@ Now with replicates:
 
 ## Mapping incursion-point sensitivity
 
-We will look at plotting some likely scenarios where incursion occurs
+Now we will look at plotting some likely scenarios where incursion occurs
 at a major port, then model all possible incursion scenarios.
 
 Set up the simulation:
@@ -135,11 +134,10 @@ end
 Now loop over all locations and reps to create grid where the value of each cell
 reflects the mean number of cells invaded for an incursion commenced at that cell.
 
-
 ```{julia; results=hidden}
-nreps = 1 #
-scale = 50
-cellsinvaded6 = GeoData.aggregate(populationgrid, scale=scale)
+nreps = 100 #
+scale = 2
+cellsinvaded6 = GeoData.aggregate(Center(), populationgrid, scale)
 @set! cellsinvaded6.name = "Cells invaded"
 cellsinvaded12 = deepcopy(cellsinvaded6)
 tspan_summer = DateTime(2020, 1), DateTime(2021, 1)
@@ -147,7 +145,7 @@ tspan_winter = DateTime(2020, 7), DateTime(2021, 7)
 init = (population=zero(populationgrid),)
 ```
 
-Then loop over the aggregated grid:
+Then loop over the aggregated grid. WARNING This may take hours or a day.
 
 ```{julia; results=hidden}
 rm("output/tiffs"; recursive=true)
@@ -159,7 +157,6 @@ build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, boolmask, mi
     outputs = [ArrayOutput(init, length(trange)) for t in 1:Threads.nthreads()]
     simdata = [DynamicGrids.SimData(init, dispersalruleset, first(tspan)) for t in 1:Threads.nthreads()]
     inits = [deepcopy(init) for t in 1:Threads.nthreads()]
-    #Threads.@threads
     for i = 1:scale:size(cellsinvaded12, 1) * scale
         acc = similar(init[:population], UInt8)
         acc .= 0
@@ -171,7 +168,7 @@ build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, boolmask, mi
             println("i, j: ", (i, j))
             boolmask[i, j] || continue
             checkbounds(Bool, acc, i, j) || continue
-            lat, lon = ArchGDAL.reproject([[londim[j], latindex[i]]], crs(init[:population]), selectorcrs(init[:population]))[1]
+            lat, lon = ArchGDAL.reproject([[londim[j], latindex[i]]], crs(init[:population]), usercrs(init[:population]))[1]
             acc .= 0
             inits[Threads.threadid()][:population] .= 0
             inits[Threads.threadid()][:population][i, j] = carrycap
@@ -195,8 +192,14 @@ build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, boolmask, mi
     end
 end
 bm = collect(boolmask)
-@profiler build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, bm, missingmask, nreps, scale, timestep, tspan_summer, "summer")
+@time build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, bm, missingmask, nreps, scale, timestep, tspan_summer, "summer")
 @time build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, bm, missingmask, nreps, scale, timestep, tspan_winter, "winter")
+for filename in readdir(".")
+    newfilename = replace(filename, r"(.*)\.(.*)\.(.*)\.tif" => s"\1_\2_\3.tif")
+    mv(filename, newfilename)
+end
+run(`zip -r ../incursion_tiffs.zip .`)
+replace("asds.adfs.adfsd.tif", )
 ```
 
 Now plot:

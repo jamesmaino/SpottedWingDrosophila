@@ -25,17 +25,17 @@ point of detection:
 p_detection(detection_rate_m, popdens, ntraps; trap_coverage = 2.7) =
     1 - ((1 - detection_rate_m)^ntraps)^(popdens * trap_coverage)
 
-function area_at_detection(areaoutput, trappinggrid, detection_per_timestep, gridsize)
+function area_at_detection(output, trappinggrid, detection_per_timestep, gridsize)
     gridarea = gridsize[1] * gridsize[2]
-    for f in eachindex(areaoutput), cell in eachindex(areaoutput[f])
-        popdens = areaoutput[f][cell] / gridarea # flies per ha
+    for f in eachindex(output), cell in eachindex(output[f][:population])
+        popdens = output[f][:population][cell] / gridarea # flies per ha
         trapnumber = trappinggrid[cell]
         trapnumber == 0 || popdens == 0 && continue
 
         p = p_detection(detection_per_timestep, popdens, trapnumber, trap_coverage = 2.7)
         # Return after first randomised detection
         if rand(Binomial(1, p)) == 1
-            return (f, sum(areaoutput[f] .> 0) * gridarea)
+            return (f, sum(output[f][:population] .> 0) * gridarea)
         end
     end
     # Not detected
@@ -47,16 +47,16 @@ Finally, define the function to running replicate simulations with
 different trapping grids.
 
 ```{julia; results=hidden}
-function trapping_reps!(areaoutput, ruleset, popgrid, location, tspan,
+function trapping_reps!(areaoutput, ruleset, init, location, tspan,
     initsize, traps_per_cells, detection_per_timestep, gridsize, simreps, surveillancereps)
     simlen = length(tspan[1]:ruleset.timestep:tspan[2])
-    init_popgrid!(popgrid, incursionpoints[location], initsize)
-    output = ArrayOutput(popgrid, simlen)
+    init_popgrid!(init[:population], incursionpoints[location], initsize)
+    output = ArrayOutput(init, simlen)
     for i = 1:simreps
-        sim!(output, ruleset; init=popgrid, tspan=tspan)
+        sim!(output, ruleset; init=init, tspan=tspan)
         for j = 1:length(traps_per_cells)
             for k = 1:surveillancereps
-                println((i, j, k))
+                println((simrep=i, traps=j, surveilancrep=k))
                 trappinggrid = build_trappinggrid(cropvalue, traps_per_cells[j])
                 areaoutput[i, j, k] = area_at_detection(output, trappinggrid, detection_per_timestep, gridsize)
                 println(areaoutput[i, j, k])
@@ -93,10 +93,12 @@ Now we will organise the data into a DataFrame that we can save
 as a CSV, and plot. We calculate min an max area curves using
 the standard deviation.
 
+This will take a while to run.
+
 
 ```{julia; results=hidden}
 for i in 1:length(incursionpoints)
-    trapping_reps!(areaoutputs[i], dispersalruleset, populationgrid, keys(incursionpoints)[i], tspan,
+    trapping_reps!(areaoutputs[i], dispersalruleset, (population=populationgrid,), keys(incursionpoints)[i], tspan,
         initsize, traps_per_cells, detection_per_timestep, gridsize, simreps, surveillancereps)
 end
 

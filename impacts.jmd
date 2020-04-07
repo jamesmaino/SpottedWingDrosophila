@@ -110,8 +110,6 @@ function build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, po
         for rep in 1:nreps
             print(rep, " ")
             sim!(output, ruleset; tspan=tspan)
-            #println((tspan, DynamicGrids.timestep(ruleset)))
-            #display(output[26])
 
             println(sum(output[26]))
             for (statename, statemask) in zip(keys(splitstates), splitstates),
@@ -135,32 +133,33 @@ function build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, po
     end
 end
 
-sim!(output, ruleset; tspan=tspan)
 build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, populationgrid, timerange, humandisp, localdisp, allee, growth)
 output = length(timerange)
 cropvalues[3] .* splitstates[3] |> plot
-GDALarray("output/costs/cherries_NSW_cost_for_Cairns_incursion.tif"; selectorcrs=EPSG(4326)) |> plot
+GDALarray("output/costs/cherries_NSW_cost_for_Cairns_incursion.tif"; usercrs=EPSG(4326)) |> plot
 impactsdata = vcat(dataframes...)
 CSV.write("output/impacts.csv", impactsdata)
 ```
 
+Plotting (broken, use R for now)
+
 ```julia; results=hidden
-meandata = @from i in alldata begin
-          @where i.state==:QLD
-          @where i.incursion==:Cairns
-          @group i by i.timestep into g
-          @select {group=key(g),meancost=mean(g.cost), stderr=std(g.cost)}
-          @colect DataFrame
-end
-meandata |> @df scatter(:timestep, :meancost)
-labels = permutedims(string.([keys(incursionpoints)...], Ref(" incursion")))
-plot(timerange, outputs;
-    title = "Crop losses to Drosophila suzukii",
-    xlabel="Date",
-    ylabel="Cost in dollars (millions)",
-    legend=:topleft,
-    labels=labels,
-)
-outputs
-savefig("output/costs_by_incursion_point.png")
+# meandata = @from i in alldata begin
+#           @where i.state==:QLD
+#           @where i.incursion==:Cairns
+#           @group i by i.timestep into g
+#           @select {group=key(g),meancost=mean(g.cost), stderr=std(g.cost)}
+#           @colect DataFrame
+# end
+# meandata |> @df scatter(:timestep, :meancost)
+# labels = permutedims(string.([keys(incursionpoints)...], Ref(" incursion")))
+# plot(timerange, outputs;
+#     title = "Crop losses to Drosophila suzukii",
+#     xlabel="Date",
+#     ylabel="Cost in dollars (millions)",
+#     legend=:topleft,
+#     labels=labels,
+# )
+# outputs
+# savefig("output/costs_by_incursion_point.png")
 ```
