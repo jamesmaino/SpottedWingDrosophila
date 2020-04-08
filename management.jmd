@@ -7,12 +7,12 @@ Now that we handle human dispersal in an interaction, we need to
 define a new dispersl ruleset that handles just local dispersal modes.
 
 ```julia; results=hidden
-localdispersalruleset = Ruleset(
-    localdisp, allee, growth;
-    init=populationgrid,
-    mask=boolmask,
-    timestep=timestep,
-);
+# localdispersalruleset = Ruleset(
+#     localdisp, allee, growth;
+#     init=populationgrid,
+#     mask=boolmask,
+#     timestep=timestep,
+# );
 ```
 
 Setup the detection mechanism. Here we make it probabilistic,
@@ -22,102 +22,104 @@ random distribution of traps in cells containing crops of value.
 
 ```julia; results=hidden
 # cropvalue is defined in impacts.jmd
-meantraps = 0.3
-trap_coverage = 0.1
-detection_rate = 0.1
-detectionmode = ProbabilisticDetectionMode(detection_rate, trap_coverage)
-detection = Biosecurity.MaskedDetection(;
-   population=:population,
-   detected=:detected,
-   sites=nothing,
-   sitemask=cropmask,
-   meantraps=meantraps,
-   detectionmode=detectionmode,
-)
+# meantraps = 0.3
+# trap_coverage = 0.1
+# detection_rate = 0.1
+# detectionmode = ProbabilisticDetectionMode(detection_rate, trap_coverage)
+# detection = Biosecurity.MaskedDetection(;
+#    population=:population,
+#    detected=:detected,
+#    sites=nothing,
+#    sitemask=cropmask,
+#    meantraps=meantraps,
+#    detectionmode=detectionmode,
+# )
 ```
 
 Set the local and juristiction quarantine responses:
 
 ```julia; results=hidden
-response_radius =1
-neighborhood = RadialNeighborhood{response_radius}()
-locresponse = NeighborhoodResponse(;
-   controlgrid=:detected,
-   targetgrid=:loc,
-   neighborhood=neighborhood
-)
-juristictionresponse = RegionResponse(;
-   controlgrid=:detected,
-   targetgrid=:juristiction,
-   regions=states
-)
+# response_radius =1
+# neighborhood = RadialNeighborhood{response_radius}()
+# locresponse = NeighborhoodResponse(;
+#    controlgrid=:detected,
+#    targetgrid=:loc,
+#    neighborhood=neighborhood
+# )
+# juristictionresponse = RegionResponse(;
+#    controlgrid=:detected,
+#    targetgrid=:juristiction,
+#    regions=states
+# )
 ```
 
 Now we can define the initial conditions grids.
 
 ```julia; results=hidden
-manageinit = (
-   population=populationgrid,
-   detected=detectedgrid,
-)
+# manageinit = (
+#    population=populationgrid,
+#    detected=detectedgrid,
+#    loc=locgrid,
+#    cost=costgrid,
+# )
 ```
 
 And define our ruleset:
 
 ```{julia; results=hidden}
-detectionruleset = Ruleset(
-   dispersalruleset.rules..., detection, locresponse, juristictionresponse;
-   init=manageinit,
-   mask=data(boolmask),
-   timestep=timestep,
-)
+# detectionruleset = Ruleset(
+#    dispersalruleset.rules..., detection, locresponse, juristictionresponse;
+#    init=manageinit,
+#    mask=data(boolmask),
+#    timestep=timestep,
+# )
 ```
 
 We use GtkOuput to run the simulation.
 
 ```{julia; results=hidden}
-using DynamicGridsGtk
-tspan = DateTime(2020, 1), DateTime(2030, 12)
-manageprocessor = LayoutProcessor([:population :detected], (viridis, jet, rainbow1, blues))
-output = GtkOutput(manageinit;
-   fps=100,
-   store=true,
-   processor=manageprocessor,
-   minval=(minimum(growthrates_zeromissing), nothing, nothing, nothing),
-   maxval=(1e6, nothing, nothing, nothing),
-)
-sim!(output, detectionruleset; tspan=tspan)
+# using DynamicGridsGtk
+# tspan = DateTime(2020, 1), DateTime(2030, 12)
+# manageprocessor = LayoutProcessor([:population :detected], (viridis, jet, rainbow1, blues))
+# output = GtkOutput(manageinit;
+#    fps=100,
+#    store=true,
+#    processor=manageprocessor,
+#    minval=(minimum(growthrates_zeromissing), nothing, nothing, nothing),
+#    maxval=(1e6, nothing, nothing, nothing),
+# )
+# sim!(output, detectionruleset; tspan=tspan)
 ```
 
 Now add an eradication model:
 
 ```{julia; results=hidden}
-eradication = Map{Tuple{:traps,:detected,:population},:population}() do traps, detected, population
-    if detected && traps > 0
-       min(population, (1-eradication_effect) * carrycap)
-    else
-       population
-    end
-end
-eradicationruleset = Ruleset(
-   dispersalruleset.rules..., detection, locresponse, juristictionresponse, eradication;
-   init=manageinit,
-   mask=boolmask,
-   timestep=timestep,
-)
+# eradication = Map{Tuple{:traps,:detected,:population},:population}() do traps, detected, population
+#     if detected && traps > 0
+#        min(population, (1-eradication_effect) * carrycap)
+#     else
+#        population
+#     end
+# end
+# eradicationruleset = Ruleset(
+#    dispersalruleset.rules..., detection, locresponse, juristictionresponse, eradication;
+#    init=manageinit,
+#    mask=boolmask,
+#    timestep=timestep,
+# )
 ```
 
 And re-run the simulation with eradication in local quarantine areas:
 
 ```{julia; results=hidden}
-output = GtkOutput(manageinit;
-   fps=100,
-   store=true,
-   processor=manageprocessor,
-   minval=(zero(carrycap), nothing, nothing, nothing),
-   maxval=(carrycap, nothing, nothing, nothing),
-)
-sim!(output, eradicationruleset; tspan=tspan)
+# output = GtkOutput(manageinit;
+#    fps=100,
+#    store=true,
+#    processor=manageprocessor,
+#    minval=(zero(carrycap), nothing),
+#    maxval=(carrycap, nothing),
+# )
+# sim!(output, eradicationruleset; tspan=tspan)
 ```
 
 
