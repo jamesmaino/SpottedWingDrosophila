@@ -7,7 +7,7 @@ NetCDF and GeoTiff files, respectively.
 
 ```{julia; results=hidden}
 using DimensionalData, GeoData, ArchGDAL, Dispersal, Biosecurity
-using Setfield, Statistics, Dates, Plots, Unitful
+using Statistics, Dates, Plots, Unitful
 using DimensionalData: setdims, rebuild, Between
 using ColorSchemes, Colors
 basedir = ""
@@ -145,8 +145,8 @@ dims(growthmask)
 growthmask |> plot
 
 # Check out growthrates and cropvalue arrays match
-#@assert all(dims(states, Lat).val .≈ dims(growthrates, Lat).val)
-#@assert all(dims(states, Lon).val .≈ dims(growthrates, Lon).val)
+@assert all(dims(states, Lat).val .≈ dims(growthrates, Lat).val)
+@assert all(dims(states, Lon).val .≈ dims(growthrates, Lon).val)
 ```
 
 Plot the growth layer:
