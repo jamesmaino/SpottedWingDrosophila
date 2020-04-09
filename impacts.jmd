@@ -42,7 +42,7 @@ costinit = (population=populationgrid, cost=costgrid)
 And run the simulaiton:
 
 ```julia; results=hidden
-using DynamicGridsGtk
+using DynamicGridsInteract
 costruleset = Ruleset(
     humandisp, localdisp, allee, growth, croploss;
     init=costinit,
@@ -50,7 +50,7 @@ costruleset = Ruleset(
     timestep=timestep
 )
 multiprocessor = LayoutProcessor([:population :cost], (jet, viridis))
-output = GtkOutput(costinit;
+output = InteractOutput(costinit, costruleset;
     fps=100,
     store=true,
     processor=multiprocessor,

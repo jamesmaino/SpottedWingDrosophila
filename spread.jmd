@@ -16,22 +16,29 @@ we can view it next to the simulation.
 ```{julia; results=hidden}
 tspan = DateTime(2020, 1), DateTime(2021, 1)
 ```
-Run the simulation in a DynamicGridsGtk window:
+Run the simulation in a DynamicGridsInteract window:
 
 ```{julia; results=hidden}
-using DynamicGridsGtk
-output = GtkOutput((population=populationgrid,);
+# using DynamicGridsGtk
+# output = GtkOutput((population=populationgrid,);
+    # store=true,
+    # fps=50,
+    # processor=inferno,
+    # minval=zero(carrycap),
+    # maxval=carrycap,
+# )
+#sim!(output, dispersalruleset; init=(population=populationgrid,), tspan=tspan);
+using DynamicGridsInteract
+lon, lat = 153.01867219917017, -30.311826034712713
+populationgrid .= 0
+populationgrid[Lon(Contains(lon)), Lat(Contains(lat))] = carrycap
+output = InteractOutput((population=populationgrid,), dispersalruleset;
     store=true,
-    fps=50,
     processor=inferno,
     minval=zero(carrycap),
     maxval=carrycap,
 )
-output.running = false
-lon, lat = 153.01867219917017, -30.311826034712713
-populationgrid .= 0
-populationgrid[Lon(Contains(lon)), Lat(Contains(lat))] = carrycap
-sim!(output, dispersalruleset; init=(population=populationgrid,), tspan=tspan);
+display(output)
 ```
 And save it as a gif:
 

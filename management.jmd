@@ -14,10 +14,7 @@ define a new dispersl ruleset that handles just local dispersal modes.
 #     timestep=timestep,
 # );
 ```
-
-Setup the detection mechanism. Here we make it probabilistic,
-meaning detections occur at some rate for a given population and
-trap coverage. Then we define the detection model, generating a
+Setup the detection mechanism. Here we make it probabilistic, meaning detections occur at some rate for a given population and trap coverage. Then we define the detection model, generating a
 random distribution of traps in cells containing crops of value.
 
 ```julia; results=hidden
@@ -301,7 +298,7 @@ trap_radii                  = [1, 5, 10]
 # local_quarantine_effects    = [0.0, 0.9999]
 # trap_radii                  = [1, 10]
 
-nreps = 30
+nreps = 1 #30
 
 trap_operation_cost = 1000.0
 croploss_fraction = 0.1
