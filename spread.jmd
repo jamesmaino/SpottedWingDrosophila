@@ -21,17 +21,18 @@ Run the simulation in a DynamicGridsInteract window:
 ```{julia; results=hidden}
 # using DynamicGridsGtk
 # output = GtkOutput((population=populationgrid,);
-    # store=true,
-    # fps=50,
-    # processor=inferno,
-    # minval=zero(carrycap),
-    # maxval=carrycap,
+#     store=true,
+#     fps=50,
+#     processor=inferno,
+#     minval=zero(carrycap),
+#     maxval=carrycap,
 # )
 using DynamicGridsInteract
 lon, lat = 153.01867219917017, -30.311826034712713
 populationgrid .= 0
 populationgrid[Lon(Contains(lon)), Lat(Contains(lat))] = carrycap
 output = InteractOutput((population=populationgrid,), dispersalruleset;
+    tspan=tspan,
     store=true,
     processor=inferno,
     minval=zero(carrycap),
@@ -39,6 +40,7 @@ output = InteractOutput((population=populationgrid,), dispersalruleset;
 )
 display(output)
 # Use this if the buttons arent working
+
 sim!(output, dispersalruleset; init=(population=populationgrid,), tspan=tspan);
 ```
 And save it as a gif:
