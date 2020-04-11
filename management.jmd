@@ -160,12 +160,14 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
       local_effect=local_effect,
       region_effect=0.0,
    )
-   eradication = Map{Tuple{:traps,:detected,:population},:population}() do traps, detected, population
-       if detected && traps > 0
-          min(population, (1-eradication_effect) * carrycap)
-       else
-          population
-       end
+   eradication = let (ee, cc) = (eradication_effect, carrycap)
+      Map{Tuple{:population,:detected,:traps},:population}() do population, detected, traps
+          if detected == oneunit(detected) && traps > zero(traps)
+             min(population, (oneunit(ee) - ee) * cc)
+          else
+             population
+          end
+      end
    end
 
    # Costs
@@ -199,12 +201,15 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
    # Ruleset
    Ruleset(
       localdisp, allee, growth,
-      settraps, trap_detection, late_detection,
-      eradication, quarantined_human_dispersal,
+      settraps,
+      late_detection,
+      trap_detection,
+      eradication,
+      quarantined_human_dispersal,
       croploss_cost, eradication_cost, local_quarantine_cost, trap_cost;
 
       init=fullinit,
-      mask=boolmask,
+      mask=nothing,
       timestep=timestep
    )
 end
@@ -212,7 +217,7 @@ end
 randominit!(population, (lat, lon), growthmask) = begin
    population .= 0.0
    randomjump = 5
-   i, j = DimensionalData.dims2indices(dims(population), (Lat(Contains(lat)), Lon(Contains(lon))))
+   i, j = DimensionalData.dims2indices(dims(populationgrid), (Lat(Contains(lat)), Lon(Contains(lon))))
    sze = size(population)
    i2, j2 = i, j
    for x in 1:100
@@ -235,6 +240,7 @@ fullinit = (
    traps=deepcopy(trapgrid),
    cost=deepcopy(costgrid),
 )
+trapgrid
 cellkms = (9u"km")^2
 fullprocessor = LayoutProcessor(
    [:population :detected; :traps :cost],
@@ -246,10 +252,10 @@ Set up a Gtk output:
 ```{julia; results=hidden}
 using DynamicGridsGtk
 output = GtkOutput(fullinit;
-   fps=40,
+   fps=100,
    store=true,
    processor=fullprocessor,
-   minval=(zero(carrycap), nothing, 0, 0.0),
+   minval=(zero(carrycap), nothing, -1, 0.0),
    maxval=(carrycap, nothing, 3, 1e6),
 )
 ```
@@ -260,8 +266,6 @@ And run a simulation in it:
 fullinit[:cost] .= 0
 randominit!(fullinit[:population], incursionpoints[:Melbourne], growthmask)
 init_trapgrid!(fullinit[:traps], incursionpoints)
-#fullinit[:traps] .=rand(0:1, size(trapgrid)...)
-#maximum(fullinit[:traps])
 tspan = DateTime(2020, 1), DateTime(2023, 1)
 trange = tspan[1]:timestep:tspan[2]
 nframes = length(trange)
@@ -272,9 +276,12 @@ local_effect        = 0.5
 eradication_effect  = 0.5
 reporting_threshold  = carrycap / 2
 
+# output = ArrayOutput(fullinit, nframes)
 fullruleset = build_fullruleset(eradication_effect, local_effect, trap_density, trap_radius, reporting_threshold)
-sim!(output, fullruleset; tspan=tspan)
+output.running = false
+@time sim!(output, fullruleset; tspan=tspan);
 ```
+
 Save a gif:
 ```{julia; results=hidden}
 savegif("management_sim_low.gif", output, fullruleset; fps=6, )

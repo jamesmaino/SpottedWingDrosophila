@@ -253,23 +253,27 @@ Make a zeros array and populate the starting cells. We need to replace the `miss
 values with something else Dispersal.jl init can't contain `missing` or it will spread everywhere:
 
 ```{julia; results=hidden}
-populationgrid = replace_missing(zero(growthrates[Ti(1)]), NaN)
+# population is set to zero, and a single point initialised
 init_popgrid!(popgrid, (lat, lon), initsize) = begin
    popgrid .= 0.0
    popgrid[Lat(Contains(lat)), Lon(Contains(lon))] = initsize
 end
-init_popgrid!(populationgrid, incursionpoints[:Brisbane], carrycap)
-# Using `Contains` finds the cell the coordinates are in
-layergrid = zero(populationgrid)
-costgrid = zero(populationgrid)
-detectedgrid = BitArray(populationgrid .* 0)
+# Traps are set to -1, and some initialised using the list of incursion points
 init_trapgrid!(trapgrid, incursionpoints) = begin
+    trapgrid .= -1
     for (lat, lon) in incursionpoints
         trapgrid[Lat(Contains(lat)), Lon(Contains(lon))] = 2
     end
     trapgrid
 end
-trapgrid = GeoArray(populationgrid; data=fill(-1, size(populationgrid)))
+
+
+populationgrid = replace_missing(zero(growthrates[Ti(1)]), NaN)
+init_popgrid!(populationgrid, incursionpoints[:Brisbane], carrycap)
+layergrid = zero(populationgrid)
+costgrid = zero(populationgrid)
+detectedgrid = rebuild(populationgrid .* 0; name="detected")
+trapgrid = GeoArray(populationgrid; data=fill(-1.0, size(populationgrid)), name="traps")
 init_trapgrid!(trapgrid, incursionpoints)
 plot(trapgrid)
 ```
