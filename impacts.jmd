@@ -51,12 +51,14 @@ costruleset = Ruleset(
 )
 multiprocessor = LayoutProcessor([:population :cost], (jet, viridis))
 output = InteractOutput(costinit, costruleset;
+    tspan=tspan,
     fps=100,
     store=true,
     processor=multiprocessor,
     minval=(0.0, 0.0),
     maxval=(carrycap, 1e7)
 )
+display(output)
 @time sim!(output, costruleset; tspan=tspan)
 ```
 
@@ -85,7 +87,7 @@ nreps = 10
 ```julia
 #Threads.@threads
 function build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, populationgrid, timerange, humandisp, localdisp, allee, growth)
-    for (incursioncity, (lat, lon)) in collect(zip(keys(incursionpoints), incursionpoints))
+    for (statekey, incursioncity, (lat, lon)) in collect(zip(incursionpointstatekeys, keys(incursionpoints), incursionpoints))
         costgrid = GeoArray(zero(populationgrid); name="cost")
         regioncropvalue = GeoArray(zero(populationgrid); name="regional crop value")
         cumcost = GeoArray(similar(populationgrid)) .= 0
@@ -107,13 +109,14 @@ function build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, po
             mask=boolmask,
             timestep=step(timerange),
         )
+        # sim output can be used for multiple crops/states
         for rep in 1:nreps
             print(rep, " ")
             sim!(output, ruleset; tspan=tspan)
 
-            println(sum(output[26]))
-            for (statename, statemask) in zip(keys(splitstates), splitstates),
-                (cropname, cropvalue) in zip(keys(cropvalues), cropvalues)
+            # println(sum(output[26]))
+            for statename in (statekey, :Australia), (cropname, cropvalue) in zip(keys(cropvalues), cropvalues)
+                statemask = splitstates[statename]
                 regioncropvalue .= cropvalue .* statemask
                 println("incursion: $incursioncity costs from: $statename for $cropname")
                 threshold=1e4
@@ -124,7 +127,7 @@ function build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, po
                     costs[i] = sum(cumcost)
                 end
                 filepath = "output/costs/$(cropname)_$(statename)_cost_for_$(incursioncity)_incursion.tif"
-                write(filepath, GDALarray, cumcost)
+                # write(filepath, GDALarray, cumcost)
                 for i in 1:length(output)
                     push!(dataframes[Threads.threadid()], (incursioncity, statename, cropname, costs[i], i, rep))
                 end
@@ -136,7 +139,7 @@ end
 build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, populationgrid, timerange, humandisp, localdisp, allee, growth)
 output = length(timerange)
 cropvalues[3] .* splitstates[3] |> plot
-GDALarray("output/costs/cherries_NSW_cost_for_Cairns_incursion.tif"; usercrs=EPSG(4326)) |> plot
+# GDALarray("output/costs/cherries_QLD_cost_for_Cairns_incursion.tif"; usercrs=EPSG(4326)) |> plot
 impactsdata = vcat(dataframes...)
 CSV.write("output/impacts.csv", impactsdata)
 ```

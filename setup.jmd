@@ -30,14 +30,35 @@ latmax = -10.65125
 aust = Lon(Between(lonmin, lonmax)), Lat(Between(latmin, latmax))
 usa = Lon(Between(-125.0, -66.96)), Lat(Between(25.0, 49.5))
 incursionpoints = (
-    Adelaide=(-34.901608, 138.601547),
-    Brisbane=(-27.436190, 152.990588),
-    Cairns=(-16.937281, 145.747709),
-    Devonport=(-41.180545, 146.314887),
     Melbourne=(-37.805896, 144.959527),
     Mildura=(-34.219504, 142.130864),
+    Coffs_Harbour=(-30.287245, 153.092991),
+    Sydney=(-33.839943, 151.006101),
+    Adelaide=(-34.901608, 138.601547),
+    Port_Augusta=(-32.466201, 137.813850),
+    Devonport=(-41.180545, 146.314887),
+    Hobart=(-42.881742, 147.323879),
+    Brisbane=(-27.436190, 152.990588),
+    Cairns=(-16.937281, 145.747709),
     Perth=(-31.9505, 115.8605),
+    Geralton=(-28.778138, 114.615632)
 )
+
+incursionpointstatekeys = (
+    Melbourne = (:Vic),
+    Mildura	 = (:Vic),
+    Coffs_Harbour =	(:NSW),
+    Sydney = (:NSW),
+    Adelaide = (:SA),
+    Port_Augusta = (:SA),
+    Devonport  = (:Tas),
+    Hobart = (:Tas),
+    Brisbane = (:QLD),
+    Cairns = (:QLD),
+    Perth =	(:WA),
+    Geraldton =	(:WA)
+)
+
 ```
 
 ## Define a RuleSet
@@ -253,27 +274,23 @@ Make a zeros array and populate the starting cells. We need to replace the `miss
 values with something else Dispersal.jl init can't contain `missing` or it will spread everywhere:
 
 ```{julia; results=hidden}
-# population is set to zero, and a single point initialised
+populationgrid = replace_missing(zero(growthrates[Ti(1)]), NaN)
 init_popgrid!(popgrid, (lat, lon), initsize) = begin
    popgrid .= 0.0
    popgrid[Lat(Contains(lat)), Lon(Contains(lon))] = initsize
 end
-# Traps are set to -1, and some initialised using the list of incursion points
+init_popgrid!(populationgrid, incursionpoints[:Brisbane], carrycap)
+# Using `Contains` finds the cell the coordinates are in
+layergrid = zero(populationgrid)
+costgrid = zero(populationgrid)
+detectedgrid = BitArray(populationgrid .* 0)
 init_trapgrid!(trapgrid, incursionpoints) = begin
-    trapgrid .= -1
     for (lat, lon) in incursionpoints
         trapgrid[Lat(Contains(lat)), Lon(Contains(lon))] = 2
     end
     trapgrid
 end
-
-
-populationgrid = replace_missing(zero(growthrates[Ti(1)]), NaN)
-init_popgrid!(populationgrid, incursionpoints[:Brisbane], carrycap)
-layergrid = zero(populationgrid)
-costgrid = zero(populationgrid)
-detectedgrid = rebuild(populationgrid .* 0; name="detected")
-trapgrid = GeoArray(populationgrid; data=fill(-1.0, size(populationgrid)), name="traps")
+trapgrid = GeoArray(populationgrid; data=fill(-1, size(populationgrid)))
 init_trapgrid!(trapgrid, incursionpoints)
 plot(trapgrid)
 ```

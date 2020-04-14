@@ -209,7 +209,7 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
       croploss_cost, eradication_cost, local_quarantine_cost, trap_cost;
 
       init=fullinit,
-      mask=nothing,
+      mask=boolmask,
       timestep=timestep
    )
 end
@@ -247,22 +247,13 @@ fullprocessor = LayoutProcessor(
    (viridis, jet, autumn, inferno)
 )
 ```
-Set up a Gtk output:
+
+
+Run a simulation in interact:
 
 ```{julia; results=hidden}
-using DynamicGridsGtk
-output = GtkOutput(fullinit;
-   fps=100,
-   store=true,
-   processor=fullprocessor,
-   minval=(zero(carrycap), nothing, -1, 0.0),
-   maxval=(carrycap, nothing, 3, 1e6),
-)
-```
+using DynamicGridsInteract
 
-And run a simulation in it:
-
-```{julia; results=hidden}
 fullinit[:cost] .= 0
 randominit!(fullinit[:population], incursionpoints[:Melbourne], growthmask)
 init_trapgrid!(fullinit[:traps], incursionpoints)
@@ -279,6 +270,17 @@ reporting_threshold  = carrycap / 2
 # output = ArrayOutput(fullinit, nframes)
 fullruleset = build_fullruleset(eradication_effect, local_effect, trap_density, trap_radius, reporting_threshold)
 output.running = false
+
+output = InteractOutput(fullinit, fullruleset;
+    tspan=tspan,
+    fps=100,
+    store=true,
+    processor=fullprocessor,
+    minval=(zero(carrycap), nothing, -1, 0.0),
+    maxval=(carrycap, nothing, 3, 1e6)
+);
+display(output)
+
 @time sim!(output, fullruleset; tspan=tspan);
 ```
 
