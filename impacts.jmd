@@ -42,30 +42,30 @@ costinit = (population=populationgrid, cost=costgrid)
 And run the simulaiton:
 
 ```julia; results=hidden
-using DynamicGridsInteract
-costruleset = Ruleset(
-    humandisp, localdisp, allee, growth, croploss;
-    init=costinit,
-    mask=boolmask,
-    timestep=timestep
-)
-multiprocessor = LayoutProcessor([:population :cost], (jet, viridis))
-output = InteractOutput(costinit, costruleset;
-    tspan=tspan,
-    fps=100,
-    store=true,
-    processor=multiprocessor,
-    minval=(0.0, 0.0),
-    maxval=(carrycap, 1e7)
-)
-display(output)
-@time sim!(output, costruleset; tspan=tspan)
+# using DynamicGridsInteract
+# costruleset = Ruleset(
+#     humandisp, localdisp, allee, growth, croploss;
+#     init=costinit,
+#     mask=boolmask,
+#     timestep=timestep
+# )
+# multiprocessor = LayoutProcessor([:population :cost], (jet, viridis))
+# output = InteractOutput(costinit, costruleset;
+#     tspan=tspan,
+#     fps=100,
+#     store=true,
+#     processor=multiprocessor,
+#     minval=(0.0, 0.0),
+#     maxval=(carrycap, 1e7)
+# )
+# display(output)
+# @time sim!(output, costruleset; tspan=tspan)
 ```
 
 And save it as a gif:
 
 ```{julia; results=hidden}
-savegif(joinpath(basedir, "output/costs.gif"), output; fps=20)
+# savegif(joinpath(basedir, "output/costs.gif"), output; fps=20)
 ```
 
 Now run it for all incursion points:
@@ -81,7 +81,7 @@ dataframes = [DataFrame(
     replicate = Int[],
 ) for thread in 1:Threads.nthreads()]
 alldata = nothing
-nreps = 10
+nreps = 1
 ```
 
 ```julia
@@ -117,13 +117,15 @@ function build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, po
             # println(sum(output[26]))
             for statename in (statekey, :Australia), (cropname, cropvalue) in zip(keys(cropvalues), cropvalues)
                 statemask = splitstates[statename]
-                regioncropvalue .= cropvalue .* statemask
+                regioncropvalue .= cropvalue .* statemask ./ 12 # divide by 12 for monthly value
                 println("incursion: $incursioncity costs from: $statename for $cropname")
                 threshold=1e4
                 cumcost .= 0.0
                 costs = zeros(length(output))
                 for i in eachindex(output)
                     cumcost .+= (output[i][:population] .> threshold) .* regioncropvalue
+                    cumcost .+= regioncropvalue
+
                     costs[i] = sum(cumcost)
                 end
                 filepath = "output/costs/$(cropname)_$(statename)_cost_for_$(incursioncity)_incursion.tif"
