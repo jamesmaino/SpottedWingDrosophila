@@ -209,8 +209,9 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
       croploss_cost, eradication_cost, local_quarantine_cost, trap_cost;
 
       init=fullinit,
-      mask=nothing,
-      timestep=timestep
+      mask=boolmask,
+      timestep=timestep,
+      opt=SparseOpt(),
    )
 end
 

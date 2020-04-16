@@ -273,7 +273,7 @@ init_popgrid!(populationgrid, incursionpoints[:Brisbane], carrycap)
 layergrid = zero(populationgrid)
 costgrid = zero(populationgrid)
 detectedgrid = rebuild(populationgrid .* 0; name="detected")
-trapgrid = GeoArray(populationgrid; data=fill(-1.0, size(populationgrid)), name="traps")
+trapgrid = GeoArray(populationgrid; data=fill(-1, size(populationgrid)), name="traps")
 init_trapgrid!(trapgrid, incursionpoints)
 plot(trapgrid)
 ```
