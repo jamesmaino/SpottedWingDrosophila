@@ -81,12 +81,12 @@ dataframes = [DataFrame(
     replicate = Int[],
 ) for thread in 1:Threads.nthreads()]
 alldata = nothing
-nreps = 1
+nreps = 100
 ```
 
 ```julia
 #Threads.@threads
-function build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, populationgrid, timerange, humandisp, localdisp, allee, growth)
+function build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, populationgrid, timerange, humandisp, localdisp, allee, growth, croploss_fraction)
     for (statekey, incursioncity, (lat, lon)) in collect(zip(incursionpointstatekeys, keys(incursionpoints), incursionpoints))
         costgrid = GeoArray(zero(populationgrid); name="cost")
         regioncropvalue = GeoArray(zero(populationgrid); name="regional crop value")
@@ -117,15 +117,13 @@ function build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, po
             # println(sum(output[26]))
             for statename in (statekey, :Australia), (cropname, cropvalue) in zip(keys(cropvalues), cropvalues)
                 statemask = splitstates[statename]
-                regioncropvalue .= cropvalue .* statemask ./ 12 # divide by 12 for monthly value
+                regioncropvalue .= cropvalue .* statemask
                 println("incursion: $incursioncity costs from: $statename for $cropname")
                 threshold=1e4
                 cumcost .= 0.0
                 costs = zeros(length(output))
                 for i in eachindex(output)
-                    cumcost .+= (output[i][:population] .> threshold) .* regioncropvalue
-                    cumcost .+= regioncropvalue
-
+                    cumcost .+= (output[i][:population] .> threshold) .* regioncropvalue .* croploss_fraction ./ 12 # divide by 12 for monthly value
                     costs[i] = sum(cumcost)
                 end
                 filepath = "output/costs/$(cropname)_$(statename)_cost_for_$(incursioncity)_incursion.tif"
@@ -138,7 +136,7 @@ function build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, po
     end
 end
 
-build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, populationgrid, timerange, humandisp, localdisp, allee, growth)
+build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, populationgrid, timerange, humandisp, localdisp, allee, growth, croploss_fraction)
 output = length(timerange)
 cropvalues[3] .* splitstates[3] |> plot
 # GDALarray("output/costs/cherries_QLD_cost_for_Cairns_incursion.tif"; usercrs=EPSG(4326)) |> plot

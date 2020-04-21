@@ -41,7 +41,7 @@ incursionpoints = (
     Brisbane=(-27.436190, 152.990588),
     Cairns=(-16.937281, 145.747709),
     Perth=(-31.9505, 115.8605),
-    Geralton=(-28.778138, 114.615632)
+    Geraldton=(-28.778138, 114.615632)
 )
 
 incursionpointstatekeys = (
@@ -189,6 +189,7 @@ cropmask |> plot
 # Check out growthrates and cropvalue arrays match
 @assert all(dims(cropvalue, Lat).val .≈ dims(growthrates, Lat).val)
 @assert all(dims(cropvalue, Lon).val .≈ dims(growthrates, Lon).val)
+croploss_fraction = 0.1 # assumed crop loss
 ```
 
 
@@ -279,7 +280,7 @@ init_popgrid!(popgrid, (lat, lon), initsize) = begin
    popgrid .= 0.0
    popgrid[Lat(Contains(lat)), Lon(Contains(lon))] = initsize
 end
-init_popgrid!(populationgrid, incursionpoints[:Brisbane], carrycap)
+init_popgrid!(populationgrid, incursionpoints[:Melbourne], carrycap)
 # Using `Contains` finds the cell the coordinates are in
 layergrid = zero(populationgrid)
 costgrid = zero(populationgrid)

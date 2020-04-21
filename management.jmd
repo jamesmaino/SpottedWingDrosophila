@@ -216,7 +216,7 @@ end
 
 randominit!(population, (lat, lon), growthmask) = begin
    population .= 0.0
-   randomjump = 5
+   randomjump = 0
    i, j = DimensionalData.dims2indices(dims(populationgrid), (Lat(Contains(lat)), Lon(Contains(lon))))
    sze = size(population)
    i2, j2 = i, j
@@ -261,15 +261,14 @@ tspan = DateTime(2020, 1), DateTime(2023, 1)
 trange = tspan[1]:timestep:tspan[2]
 nframes = length(trange)
 
-trap_density        = 1e-2u"km^-2"
-trap_radius         = 2
-local_effect        = 0.5
-eradication_effect  = 0.5
-reporting_threshold  = carrycap / 2
+trap_density        = 10.0u"km^-2"
+trap_radius         = 1
+local_effect        = 0.0
+eradication_effect  = 0.9999
+reporting_threshold  = 1e4 # carrycap * 0.5
 
 # output = ArrayOutput(fullinit, nframes)
 fullruleset = build_fullruleset(eradication_effect, local_effect, trap_density, trap_radius, reporting_threshold)
-output.running = false
 
 output = InteractOutput(fullinit, fullruleset;
     tspan=tspan,
@@ -280,8 +279,12 @@ output = InteractOutput(fullinit, fullruleset;
     maxval=(carrycap, nothing, 3, 1e6)
 );
 display(output)
-
-@time sim!(output, fullruleset; tspan=tspan);
+# plot(output[37][:traps])
+sum(output[37][:cost])
+# @time sim!(output, fullruleset; tspan=tspan);
+GeoData.write("output/test.tif", GDALarray, output[37][:cost])
+# A = output[37][:population]
+# CSV.write("output/FileName.csv",  DataFrame(A), writeheader=false)
 ```
 
 Save a gif:
@@ -298,19 +301,20 @@ trange = tspan[1]:timestep:tspan[2]
 nframes = length(trange)
 trapmask = growthmask
 
-eradication_effects         = [0.0, 0.5, 0.99, 0.9999, 0.999999]
-local_quarantine_effects    = [0.0, 0.5, 0.99, 0.9999]
+# eradication_effects         = [0.0, 0.5, 0.99, 0.9999, 0.999999]
+# local_quarantine_effects    = [0.0, 0.5, 0.99, 0.9999]
+# trap_densities              = [0.0, 0.0001, 0.001, 0.01, 0.1, 1.0] .* u"km^-2"
+# trap_radii                  = [1, 5, 10]
+
+eradication_effects         = [0.0, 0.9999]
+local_quarantine_effects    = [0.0, 0.9999]
+trap_radii                  = [1]
 trap_densities              = [0.0, 0.0001, 0.001, 0.01, 0.1, 1.0] .* u"km^-2"
-trap_radii                  = [1, 5, 10]
+education = [true, false]
 
-# eradication_effects         = [0.0, 0.9999]
-# local_quarantine_effects    = [0.0, 0.9999]
-# trap_radii                  = [1, 10]
-
-nreps = 1 #30
+nreps = 5 #30
 
 trap_operation_cost = 1000.0
-croploss_fraction = 0.1
 croploss_threshold = 1.0
 eradication_costperkm = 1e4u"km^-2"
 
@@ -320,6 +324,7 @@ sensitivity = [DataFrame(
    local_quarantine = Float64[],
    trap_density =  Float64[],
    trap_radii =  Int[],
+   education =  Bool[],
    replicate = Int[],
    timestep = Int[],
    area = Float64[],
@@ -330,29 +335,41 @@ sensitivity = [DataFrame(
 ) for thread in 1:Threads.nthreads()]
 
 #loc, point = :Melbourne, incursionpoints[:Melbourne]
+incursionpoints1 = (Melbourne = (-37.805896, 144.959527), Sydney = (-33.839943, 151.006101), Adelaide = (-34.901608, 138.601547),  Hobart = (-42.881742, 147.323879), Brisbane = (-27.43619, 152.990588), Perth = (-31.9505, 115.8605))
 
-@time for (loc, point) in zip(keys(incursionpoints), incursionpoints),
+@time for (loc, point) in zip(keys(incursionpoints1), incursionpoints1),
     e in eradication_effects,
     l in local_quarantine_effects,
     t in trap_densities,
-    r in trap_radii
-   println("running: ", (incursion=loc, eradication=e, loc_quarantine=l, trap_radius=r, trap_density=t, nreps=nreps))
-   Threads.@threads for rep in 1:nreps
+    r in trap_radii,
+    edu in education
+
+     # eduction decreases crop loss and reporting threshold
+    if edu
+      i_croploss_fraction = 0.01
+      i_reporting_threshold = 1e5
+    else
+      i_croploss_fraction = croploss_fraction
+      i_reporting_threshold = reporting_threshold
+    end
+   println("running: ", (incursion=loc, eradication=e, loc_quarantine=l, trap_radius=r, trap_density=t, education=edu, nreps=nreps))
+   # Threads.@threads
+   for rep in 1:nreps
       # Initialise
       randominit!(fullinit[:population], point, growthmask)
       init_trapgrid!(fullinit[:traps], incursionpoints)
       fullinit[:cost] .= 0.0
       output = ArrayOutput(fullinit, nframes)
 
-      ruleset = build_fullruleset(e, l, t, r, reporting_threshold)
+      ruleset = build_fullruleset(e, l, t, r, i_reporting_threshold)
       sim!(output, ruleset; tspan=tspan)
       for f in 1:length(output)
          area = count(x -> x > 0.0, output[f][:population]) * cellkms / u"km^2"
          c_traps = sum((output[f][:traps] .> 0) .* output[f][:traps] .* trap_operation_cost / 12)
          c_eradication = sum((output[f][:traps] .> 0) .* output[f][:detected] .* eradication_costperkm .* cellkms .* e ./ 12)
          c_quarantine = sum(output[f][:detected] .* cropvalue .* l ./ 12)
-         c_industry = sum((output[f][:population] .>= 1) .* cropvalue ./ 12 .* croploss_fraction)
-         push!(sensitivity[Threads.threadid()], (loc, e, l, t*u"km^2", r, rep, f, area, c_traps, c_eradication, c_quarantine, c_industry))
+         c_industry = sum((output[f][:population] .>= 1) .* cropvalue ./ 12 .* i_croploss_fraction)
+         push!(sensitivity[Threads.threadid()], (loc, e, l, t*u"km^2", r, edu, rep, f, area, c_traps, c_eradication, c_quarantine, c_industry))
       end
    end
    yield()
