@@ -83,16 +83,16 @@ series = SMAPseries(smap_folder)
 Otherwise get the series from tiff files, which is a little more hands-on:
 
 ```julia; results=hidden
-unzippedfolder = "/home/raf/Work/cesar/Raster/SMAP/SMAP_aggregated27km"
-filenames = readdir(unzippedfolder)
-wilting_paths =
-    joinpath.(Ref(unzippedfolder), filter(fn -> occursin(r"land_fraction_wilting", fn), filenames))
-surface_temp_paths =
-    joinpath.(Ref(unzippedfolder), filter(fn -> occursin(r"surface_temp", fn), filenames))
-
-# Get the dates covered in the data from the `surface_temp` files list, using regex:
-df = DateFormat("yyyymmddTHHMMSS")
-dates = DateTime.(replace.(surface_temp_paths, Ref(r".*_(\d+T\d+).tif" => s"\1")), Ref(df))
+# unzippedfolder = "/home/raf/Work/cesar/Raster/SMAP/SMAP_aggregated27km"
+# filenames = readdir(unzippedfolder)
+# wilting_paths =
+#     joinpath.(Ref(unzippedfolder), filter(fn -> occursin(r"land_fraction_wilting", fn), filenames))
+# surface_temp_paths =
+#     joinpath.(Ref(unzippedfolder), filter(fn -> occursin(r"surface_temp", fn), filenames))
+#
+# # Get the dates covered in the data from the `surface_temp` files list, using regex:
+# df = DateFormat("yyyymmddTHHMMSS")
+# dates = DateTime.(replace.(surface_temp_paths, Ref(r".*_(\d+T\d+).tif" => s"\1")), Ref(df))
 
 #= We know the "land_fraction_wilting" files are for the same dates.
 Now we have the files and date seies, we can put together
@@ -100,12 +100,12 @@ a series of GeoData.jl stacks to load from disk while generating growth maps
 The beauty of this approach is that we can use a lot of different source file types and
 folder configurations without converting them or running out of RAM.
 =#
-makestack(i) =
-    GDALstack((land_fraction_wilting=wilting_paths[i], surface_temp=surface_temp_paths[i]);
-              window=(Band(1),), usercrs=EPSG(4326))
-timedim = Ti(dates; mode=Sampled(Ordered(), Regular(Hour(3)), Intervals(Start())))
-stacks = [makestack(i) for i in 1:length(surface_temp_paths)]
-series = GeoSeries(stacks, (timedim,))
+# makestack(i) =
+#     GDALstack((land_fraction_wilting=wilting_paths[i], surface_temp=surface_temp_paths[i]);
+#               window=(Band(1),), usercrs=EPSG(4326))
+# timedim = Ti(dates; mode=Sampled(Ordered(), Regular(Hour(3)), Intervals(Start())))
+# stacks = [makestack(i) for i in 1:length(surface_temp_paths)]
+# series = GeoSeries(stacks, (timedim,))
 ```
 
 We can plot a layer from a file at some date in the series:
@@ -120,6 +120,7 @@ First we'll run this basic growth model:
 growthrates = mapgrowth(growth, series;
     period=Month(1),
     nperiods=12,
+    startdate=first(bounds(series, Ti))
 )
 growthrates[Ti(1:3:12)] |> plot
 ```
@@ -151,6 +152,7 @@ and run them:
 growthrates = mapgrowth((growth, heatstress, coldstress, wiltstress), series;
     period=Month(1),
     nperiods=12,
+    startdate=first(bounds(series, Ti))
 )
 growthrates[Ti(1:3:12)] |> plot
 ```
@@ -201,6 +203,7 @@ the stress responses to the map:
 modelkwargs = (
     period=Month(12),
     nperiods=1,
+    startdate=first(bounds(series, Ti))
 )
 wrapper = ModelWrapper(wiltstress, coldstress, heatstress)
 mapfit!(wrapper, aggseries, modelkwargs;
@@ -220,12 +223,13 @@ wiltstress, coldstress, heatstress = wrapper.model
 ```
 
 Now we will put together decent population growth maps
-using higher resolutions data, and a monthly timestep:
+using the higher resolution data, with a monthly timestep:
 
 ```julia; results=hidden
 growthrates = mapgrowth((growth, wiltstress, coldstress, heatstress), series;
     period=Month(1),
     nperiods=12,
+    startdate=first(bounds(series, Ti))
 );
 plot(growthrates[Ti(1:3:12)]; clims=(0.0, 0.15), axis=false)
 ```
@@ -266,3 +270,27 @@ savefig("output/population_growth_mean.png")
 Now, if you need to use the model for a serious application, run it on the real
 SMAP dataset. GeoData.jl has a `SMAPseries()` constructor that will automate the
 whole process of loading real SMAP HDF5 files.
+
+```julia
+using HDF5
+smappath = "/home/raf/Storage/Data/SMAP/SMAP_L4_SM_gph_v4"
+tstart, tstop = Date(2017), Date(2018)
+days = (1, 4, 8, 12, 16, 20, 23, 27)
+smapseries = SMAPseries(smappath)[Where(t -> t >= tstart && t < tstop && dayofmonth(t) in days)]
+@assert length(smapseries) == 12 * 8 * 8
+@time output = mapgrowth((fittedgrowth, wiltstress, coldstress, heatstress), smapseries;
+                   period=Month(1),
+                   nperiods=12,
+                   subperiod=Day(1),
+                   startdate=startdate
+                  );
+
+plot(output[Ti(1:3:12)]; axis=false)
+
+savepath = joinpath(basedir, "growthrates.ncd")
+write(savepath, NCDarray, output)
+
+ncarray = NCDarray(savepath)
+plot(ncarray[Ti(1:3:12)]; axis=false)
+size(ncarray)
+```
