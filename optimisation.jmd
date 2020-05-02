@@ -7,10 +7,8 @@ using Unitful: d
 Threads.nthreads()
 ```
 
-
-
-
 # Override default parameter range limits
+
 ```julia
 import FieldMetadata: @relimits, limits, @reflattenable, flattenable
 
@@ -39,18 +37,14 @@ end
 end
 ```
 
-Load simualtions for USA
 
 ```julia
-datafile = "spread_inputs_US_SWD.h5"
 starttime = DateTime(2008, 5)
 timestep = Month(1)
 stoptime = DateTime(2013, 12)
-include("setup_rulesets.jl")
 
 # Define combinations for comparison  ##########################
 kwargs = (init=init, mask=boolmask, timestep=timestep)
-
 full = Ruleset(humandisp, Chain(localdisp, allee, growth); kwargs...)
 nolocal = Ruleset(humandisp, allee, growth; kwargs...);
 noallee = Ruleset(humandisp, Chain(localdisp, growth); kwargs...);

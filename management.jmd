@@ -210,7 +210,8 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
 
       init=fullinit,
       mask=boolmask,
-      timestep=timestep
+      timestep=timestep,
+      opt=SparseOpt(),
    )
 end
 
