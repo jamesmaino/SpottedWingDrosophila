@@ -1,126 +1,5 @@
-
-```julia; results=hidden
-using DataFrames, CSV
-```
-
-Now that we handle human dispersal in an interaction, we need to
-define a new dispersl ruleset that handles just local dispersal modes.
-
-```julia; results=hidden
-# localdispersalruleset = Ruleset(
-#     localdisp, allee, growth;
-#     init=populationgrid,
-#     mask=boolmask,
-#     timestep=timestep,
-# );
-```
-Setup the detection mechanism. Here we make it probabilistic, meaning detections occur at some rate for a given population and trap coverage. Then we define the detection model, generating a
-random distribution of traps in cells containing crops of value.
-
-```julia; results=hidden
-# cropvalue is defined in impacts.jmd
-# meantraps = 0.3
-# trap_coverage = 0.1
-# detection_rate = 0.1
-# detectionmode = ProbabilisticDetectionMode(detection_rate, trap_coverage)
-# detection = Biosecurity.MaskedDetection(;
-#    population=:population,
-#    detected=:detected,
-#    sites=nothing,
-#    sitemask=cropmask,
-#    meantraps=meantraps,
-#    detectionmode=detectionmode,
-# )
-```
-
-Set the local and juristiction quarantine responses:
-
-```julia; results=hidden
-# response_radius =1
-# neighborhood = RadialNeighborhood{response_radius}()
-# locresponse = NeighborhoodResponse(;
-#    controlgrid=:detected,
-#    targetgrid=:loc,
-#    neighborhood=neighborhood
-# )
-# juristictionresponse = RegionResponse(;
-#    controlgrid=:detected,
-#    targetgrid=:juristiction,
-#    regions=states
-# )
-```
-
-Now we can define the initial conditions grids.
-
-```julia; results=hidden
-# manageinit = (
-#    population=populationgrid,
-#    detected=detectedgrid,
-#    loc=locgrid,
-#    cost=costgrid,
-# )
-```
-
-And define our ruleset:
-
-```{julia; results=hidden}
-# detectionruleset = Ruleset(
-#    dispersalruleset.rules..., detection, locresponse, juristictionresponse;
-#    init=manageinit,
-#    mask=data(boolmask),
-#    timestep=timestep,
-# )
-```
-
-We use GtkOuput to run the simulation.
-
-```{julia; results=hidden}
-# using DynamicGridsGtk
-# tspan = DateTime(2020, 1), DateTime(2030, 12)
-# manageprocessor = LayoutProcessor([:population :detected], (viridis, jet, rainbow1, blues))
-# output = GtkOutput(manageinit;
-#    fps=100,
-#    store=true,
-#    processor=manageprocessor,
-#    minval=(minimum(growthrates_zeromissing), nothing, nothing, nothing),
-#    maxval=(1e6, nothing, nothing, nothing),
-# )
-# sim!(output, detectionruleset; tspan=tspan)
-```
-
-Now add an eradication model:
-
-```{julia; results=hidden}
-# eradication = Map{Tuple{:traps,:detected,:population},:population}() do traps, detected, population
-#     if detected && traps > 0
-#        min(population, (1-eradication_effect) * carrycap)
-#     else
-#        population
-#     end
-# end
-# eradicationruleset = Ruleset(
-#    dispersalruleset.rules..., detection, locresponse, juristictionresponse, eradication;
-#    init=manageinit,
-#    mask=boolmask,
-#    timestep=timestep,
-# )
-```
-
-And re-run the simulation with eradication in local quarantine areas:
-
-```{julia; results=hidden}
-# output = GtkOutput(manageinit;
-#    fps=100,
-#    store=true,
-#    processor=manageprocessor,
-#    minval=(zero(carrycap), nothing),
-#    maxval=(carrycap, nothing),
-# )
-# sim!(output, eradicationruleset; tspan=tspan)
-```
-
-
-Now setup up a sensitivity analysis testing impacts of various management responses.
+We'll set up a management model for running
+testing impacts of various management responses.
 
 ```{julia; results=hidden}
 function build_fullruleset(eradication_effect, local_effect, trap_density, trap_radius, reporting_threshold)
@@ -214,7 +93,9 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
       opt=SparseOpt(),
    )
 end
+```
 
+```{julia; results=hidden}
 randominit!(population, (lat, lon), growthmask) = begin
    population .= 0.0
    randomjump = 0
@@ -296,6 +177,8 @@ savegif("management_sim_low.gif", output, fullruleset; fps=6, )
 Run replicates:
 
 ```{julia; results=hidden}
+using DataFrames, CSV
+
 # Run for 3 years!!!!
 tspan = DateTime(2020, 1), DateTime(2023, 1)
 trange = tspan[1]:timestep:tspan[2]

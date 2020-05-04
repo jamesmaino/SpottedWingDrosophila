@@ -70,26 +70,26 @@ dispersal.
 Load the growthrates layer from netcdf:
 
 ```{julia; eval=false}
-# growthratesfilename = "growthrates.ncd"
-# growthratesfilepath = joinpath(basedir, "data", growthratesfilename)
-#growthrates = NCDarray(growthratesfilepath)[aust...] |>
-    #x->permutedims(x, (Lat, Lon, Ti)) |>
-    #x->reverse(x; dims=Lat) |>
-    #x->setdims(x, rebuild(dims(x, Ti); grid=RegularGrid(; step=Month(1))))
+using NCDatasets
+growthratesfilename = "growthrates.ncd"
+growthratesfilepath = joinpath(basedir, "data", growthratesfilename)
+growthrates = NCDarray(growthratesfilepath)[aust...] |>
+    x->permutedims(x, (Lat, Lon, Ti)) |>
+    x->reverse(x; dims=Lat) |>
+    x->setdims(x, rebuild(dims(x, Ti); mode=Sampled(; span=Regular(Month(1)))))
 ```
 
-From HDF5:
+Or From multiple tif files:
 
 ```{julia; eval=false}
-# using HDF5
-# swd_data = h5open("data/spread_inputs_Aus_SWD.h5", "r")
-# dimz = (Lat((20, 60); grid=AlignedGrid(order=GeoData.Ordered(GeoData.Forward(), GeoData.Reverse(), GeoData.Forward()))),
-        # Lon((-125, -75); grid=AlignedGrid()))
-# populationgrid = GeoArray(read(swd_data["x_y_initial"]["brisbane"]) .* 1f9, dimz; missingval=NaN32)[aust...] # Arbitrary initial condition
-# monthsofyear = Time(DateTime(2008):Month(1):DateTime(2008)+Month(11))
-# growthrates = GeoArray(read(swd_data["x_y_month_intrinsicGrowthRate"]), (dimz..., monthsofyear); missingval=NaN32) |>
-# growthrates[Time(12)] |> plot
-# size(growthrates)
+growthrates_filenames = ["data/growthrates_tifs/limited_growth_2017_$n.tif"
+                            for n in lpad.(string.(1:12), 2, "0")]
+grtifs = GDALarray.(growthrates_filenames; name="Growth Rate", usercrs=EPSG(4326))
+growthratesvec = (A -> A[Band(1), aust...]).(grtifs)
+growthtimespan = DateTime(2017,1):Month(1):DateTime(2017,12)
+growthrates = cat(growthratesvec...; dims=Ti(growthtimespan)) |>
+    x->permutedims(x, (Lat, Lon, Ti))
+plot(growthrates[Ti(3)])
 ```
 
 
@@ -144,19 +144,6 @@ missingmask = GeoData.missingmask(states)
 size(boolmask)
 plot(boolmask)
 plot(missingmask)
-```
-
-From multiple tif files:
-
-```{julia; eval=false}
-growthrates_filenames = ["data/growthrates_tifs/limited_growth_2017_$n.tif"
-                            for n in lpad.(string.(1:12), 2, "0")]
-grtifs = GDALarray.(growthrates_filenames; name="Growth Rate", usercrs=EPSG(4326))
-growthratesvec = (A -> A[Band(1), aust...]).(grtifs)
-growthtimespan = DateTime(2017,1):Month(1):DateTime(2017,12)
-growthrates = cat(growthratesvec...; dims=Ti(growthtimespan)) |>
-    x->permutedims(x, (Lat, Lon, Ti))
-plot(growthrates[Ti(3)])
 # Remove missing values from the growthrates array. We don't want them to propagate through the simulation.
 growthrates_zeromissing = replace_missing(growthrates, 0.0)
 growthmask = rebuild(boolmask, mean(growthrates_zeromissing; dims=Ti)[Ti(1)] .* boolmask .> 0)
@@ -256,10 +243,8 @@ scale = 8
     dist_exponent=1.429,
     dispersalperpop=8.703e-9,
     max_dispersers=3.264e4,
-    shortlist_len=100,
-    timestep=timestep,
+    nshortlisted=100,
 )
-humandisp.dest_shortlists
 
 I = (DimensionalData.dims2indices(states, (Lat(Contains(-36.805896)), Lon(Contains(143.959527)))) .-1) .÷ scale .+ 1
 melb_dests = Dispersal.populate!(zero(human_pop), humandisp, I...)

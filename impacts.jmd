@@ -85,8 +85,8 @@ nreps = 100
 ```
 
 ```julia
-#Threads.@threads
 function build_impacts!(dataframes, incursionpoints, cropvalues, splitstates, populationgrid, timerange, humandisp, localdisp, allee, growth, croploss_fraction)
+    #Threads.@threads
     for (statekey, incursioncity, (lat, lon)) in collect(zip(incursionpointstatekeys, keys(incursionpoints), incursionpoints))
         costgrid = GeoArray(zero(populationgrid); name="cost")
         regioncropvalue = GeoArray(zero(populationgrid); name="regional crop value")
