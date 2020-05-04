@@ -3,8 +3,9 @@
 using DataFrames, CSV
 ```
 
-Now that we handle human dispersal in an interaction, we need to
-define a new dispersl ruleset that handles just local dispersal modes.
+Now tha human dispersal interacts with quarantine i.e. less human dispersal events
+if quarantined, we need to define a new dispersl ruleset that handles just local
+dispersal modes.
 
 ```julia; results=hidden
 # localdispersalruleset = Ruleset(
@@ -14,8 +15,12 @@ define a new dispersl ruleset that handles just local dispersal modes.
 #     timestep=timestep,
 # );
 ```
-Setup the detection mechanism. Here we make it probabilistic, meaning detections occur at some rate for a given population and trap coverage. Then we define the detection model, generating a
-random distribution of traps in cells containing crops of value.
+Pest detection is a probabiltic process that depends on the sensitivity of the
+detection methods (e.g. trap or inspection), the exposure (e.g. number of traps)
+and the size of the population being detected. We define the detection model here,
+based on a random distribution of traps in cells at a predetermined density.
+In addition, traps are allocated only to particular cells depending on whether
+they containing crops of value.
 
 ```julia; results=hidden
 # cropvalue is defined in impacts.jmd
@@ -33,7 +38,9 @@ random distribution of traps in cells containing crops of value.
 # )
 ```
 
-Set the local and juristiction quarantine responses:
+Here we set the local and juristiction quarantine responses, which decreases
+human assisted spread locally (nearby cells) or at a jurisdiction level (e.g.
+between states and territories).
 
 ```julia; results=hidden
 # response_radius =1
@@ -50,7 +57,8 @@ Set the local and juristiction quarantine responses:
 # )
 ```
 
-Now we can define the initial conditions grids.
+Now we can define the initial conditions grids. This sets the initial pest
+populations, cells where the pest is detected, etc.
 
 ```julia; results=hidden
 # manageinit = (
@@ -88,7 +96,9 @@ We use GtkOuput to run the simulation.
 # sim!(output, detectionruleset; tspan=tspan)
 ```
 
-Now add an eradication model:
+Now add an eradication model. This ensures the populations per cell do not
+exceed some low level; in this case, some proportion of the carrycapacity of
+each cell.
 
 ```{julia; results=hidden}
 # eradication = Map{Tuple{:traps,:detected,:population},:population}() do traps, detected, population
@@ -118,7 +128,6 @@ And re-run the simulation with eradication in local quarantine areas:
 # )
 # sim!(output, eradicationruleset; tspan=tspan)
 ```
-
 
 Now setup up a sensitivity analysis testing impacts of various management responses.
 
@@ -215,6 +224,7 @@ function build_fullruleset(eradication_effect, local_effect, trap_density, trap_
 end
 
 randominit!(population, (lat, lon), growthmask) = begin
+   # this only works if population is initialised at low numbers, otherwise late detection is triggered
    population .= 0.0
    randomjump = 0
    i, j = DimensionalData.dims2indices(dims(populationgrid), (Lat(Contains(lat)), Lon(Contains(lon))))
@@ -263,9 +273,9 @@ nframes = length(trange)
 
 trap_density        = 10.0u"km^-2"
 trap_radius         = 1
-local_effect        = 0.0
+local_effect        = 0.9999
 eradication_effect  = 0.9999
-reporting_threshold  = 1e4 # carrycap * 0.5
+reporting_threshold  = carrycap * 0.5
 
 # output = ArrayOutput(fullinit, nframes)
 fullruleset = build_fullruleset(eradication_effect, local_effect, trap_density, trap_radius, reporting_threshold)
@@ -280,9 +290,9 @@ output = InteractOutput(fullinit, fullruleset;
 );
 display(output)
 # plot(output[37][:traps])
-sum(output[37][:cost])
+# sum(output[37][:cost])
 # @time sim!(output, fullruleset; tspan=tspan);
-GeoData.write("output/test.tif", GDALarray, output[37][:cost])
+# GeoData.write("output/test.tif", GDALarray, output[37][:cost])
 # A = output[37][:population]
 # CSV.write("output/FileName.csv",  DataFrame(A), writeheader=false)
 ```
@@ -316,7 +326,7 @@ nreps = 5 #30
 
 trap_operation_cost = 1000.0
 croploss_threshold = 1.0
-eradication_costperkm = 1e4u"km^-2"
+eradication_costperkm = 3e5u"km^-2"
 
 sensitivity = [DataFrame(
    incursion = Symbol[],
@@ -346,7 +356,7 @@ incursionpoints1 = (Melbourne = (-37.805896, 144.959527), Sydney = (-33.839943, 
 
      # eduction decreases crop loss and reporting threshold
     if edu
-      i_croploss_fraction = 0.01
+      i_croploss_fraction = 0.05
       i_reporting_threshold = 1e5
     else
       i_croploss_fraction = croploss_fraction
