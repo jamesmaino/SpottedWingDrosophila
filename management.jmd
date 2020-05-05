@@ -218,8 +218,14 @@ sensitivity = [DataFrame(
    c_industry = Float64[],
 ) for thread in 1:Threads.nthreads()]
 
-#loc, point = :Melbourne, incursionpoints[:Melbourne]
-incursionpoints1 = (Melbourne = (-37.805896, 144.959527), Sydney = (-33.839943, 151.006101), Adelaide = (-34.901608, 138.601547),  Hobart = (-42.881742, 147.323879), Brisbane = (-27.43619, 152.990588), Perth = (-31.9505, 115.8605))
+incursionpoints1 = (
+  Melbourne = (-37.805896, 144.959527), 
+  Sydney = (-33.839943, 151.006101), 
+  Adelaide = (-34.901608, 138.601547), 
+  Hobart = (-42.881742, 147.323879), 
+  Brisbane = (-27.43619, 152.990588), 
+  Perth = (-31.9505, 115.8605)
+)
 
 @time for (loc, point) in zip(keys(incursionpoints1), incursionpoints1),
     e in eradication_effects,
