@@ -16,7 +16,7 @@ gr()
 
 ### Define simulation settings
 
-We use DateTime units of for the timestep:
+We use DateTime unitsof months for the timestep:
 
 ```{julia; results=hidden}
 timestep = Month(1);
