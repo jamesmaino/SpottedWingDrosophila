@@ -63,7 +63,7 @@ If you are happy with the result, you we can update extract the manual fit
 to use to generate our growth rate maps:
 
 ```julia; results=hidden
-growth = wrapper.model
+fittedgrowth = wrapper.model
 ```
 
 Note that `manualfit!` will also work for a tuple of model components
@@ -83,7 +83,7 @@ series = SMAPseries(smap_folder)
 Otherwise get the series from tiff files, which is a little more hands-on:
 
 ```julia; results=hidden
-unzippedfolder = "/home/raf/Work/cesar/Data/Raster/SMAP/SMAP_aggregated27km"
+unzippedfolder = "/home/raf/Work/cesar/Raster/SMAP/SMAP_aggregated27km"
 filenames = readdir(unzippedfolder)
 wilting_paths =
     joinpath.(Ref(unzippedfolder), filter(fn -> occursin(r"land_fraction_wilting", fn), filenames))
@@ -117,7 +117,7 @@ series[1][:surface_temp] |> plot
 First we'll run this basic growth model:
 
 ```julia; results=hidden
-growthrates = mapgrowth(growth, series;
+growthrates = mapgrowth(wetstress, series;
     period=Month(1),
     nperiods=12,
     startdate=first(bounds(series, Ti))
@@ -132,16 +132,20 @@ Now define some stressors:
 # Mortality rate per heat stress, °C/d 0.365
 
 coldthresh = -10.0°C |> K  # Enriquez2017
-coldmort = log(1.23) * K^-1 # Stephens2015
+coldmort = -log(1.23) * K^-1 # Stephens2015
 coldstress = Layer(:surface_temp, ColdStress(coldthresh, coldmort))
 
 heatthresh = 30.0°C |> K # Kimura2004
-heatmort = log(1.15) * K^-1
+heatmort = -log(1.15) * K^-1
 heatstress = Layer(:surface_temp, HeatStress(heatthresh, heatmort))
 
 wiltthresh = 0.5
-wiltmort = 4.6 # log(1.1) ??
+wiltmort = -log(1.1) #-4.6 ??
 wiltstress = Layer(:land_fraction_wilting, WiltStress(wiltthresh, wiltmort));
+
+wetthresh = 0.8
+wetmort = -10
+wetstress = Layer(:sm_surface_wetness, UpperStress(wiltthresh, wiltmort));
 ```
 
 
@@ -275,18 +279,20 @@ whole process of loading real SMAP HDF5 files.
 using HDF5
 # Add the path to your SMAP data folder
 smappath = "/home/raf/Storage/Data/SMAP/SMAP_L4_SM_gph_v4"
-tstart, tstop = Date(2017), Date(2018)
+tstart, tstop = DateTime(2017), DateTime(2018)
 days = (1, 4, 8, 12, 16, 20, 23, 27)
 smapseries = SMAPseries(smappath)[Where(t -> t >= tstart && t < tstop && dayofmonth(t) in days)]
 @assert length(smapseries) == 12 * 8 * 8
-@time output = mapgrowth((growth, wiltstress, coldstress, heatstress), smapseries;
-                   period=Month(1),
-                   nperiods=12,
-                   startdate=tstart
-                  );
+@time output = mapgrowth(
+    (growth, wiltstress, wetstress, coldstress, heatstress), smapseries;
+    period=Month(1),
+    nperiods=12,
+    startdate=tstart,
+);
 
 plot(output[Ti(1:3:12)]; axis=false)
+plot(growthrates[Ti(1:3:12)]; axis=false)
 
-savepath = joinpath(basedir, "growthrates.ncd")
-write(savepath, NCDarray, output)
+growthratesfilepath = joinpath(basedir, "data", growthratesfilename)
+write(growthratesfilepath, NCDarray, output)
 ```

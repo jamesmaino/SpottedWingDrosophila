@@ -79,7 +79,7 @@ tspan = starttime, stoptime
 trange = starttime:timestep:stoptime
 init = zero(populationgrid)
 output = ArrayOutput(init, length(trange))
-nreps = 100
+nreps = 10
 ```
 Set up the output grid (which can be smaller than the sim to save time)
 Now make some pathway plots for some key incursion points.
@@ -136,7 +136,7 @@ Now loop over all locations and reps to create grid where the value of each cell
 reflects the mean number of cells invaded for an incursion commenced at that cell.
 
 ```{julia; results=hidden}
-nreps = 100 #
+nreps = 100
 scale = 2
 nreps = 1 #
 scale = 20
@@ -172,7 +172,7 @@ build_plots!(cellsinvaded6, cellsinvaded12, dispersalruleset, init, boolmask, mi
             println("i, j: ", (i, j))
             boolmask[i, j] || continue
             checkbounds(Bool, acc, i, j) || continue
-            lat, lon = ArchGDAL.reproject([[londim[j], latindex[i]]], crs(init[:population]), usercrs(init[:population]))[1]
+            lat, lon = ArchGDAL.reproject([[londim[j], latindex[i]]], crs(init[:population]), EPSG(4326))[1]
             acc .= 0
             inits[Threads.threadid()][:population] .= 0
             inits[Threads.threadid()][:population][i, j] = carrycap

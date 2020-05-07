@@ -122,7 +122,6 @@ fullinit = (
    traps=deepcopy(trapgrid),
    cost=deepcopy(costgrid),
 )
-trapgrid
 cellkms = (9u"km")^2
 fullprocessor = LayoutProcessor(
    [:population :detected; :traps :cost],
@@ -149,7 +148,6 @@ local_effect        = 0.9999
 eradication_effect  = 0.9999
 reporting_threshold  = carrycap * 0.5
 
-# output = ArrayOutput(fullinit, nframes)
 fullruleset = build_fullruleset(eradication_effect, local_effect, trap_density, trap_radius, reporting_threshold)
 
 output = InteractOutput(fullinit, fullruleset;
@@ -161,9 +159,12 @@ output = InteractOutput(fullinit, fullruleset;
     maxval=(carrycap, nothing, 3, 1e6)
 );
 display(output)
+
+# output = ArrayOutput(fullinit, nframes)
+# @time sim!(output, fullruleset; tspan=tspan);
+
 # plot(output[37][:traps])
 # sum(output[37][:cost])
-# @time sim!(output, fullruleset; tspan=tspan);
 # GeoData.write("output/test.tif", GDALarray, output[37][:cost])
 # A = output[37][:population]
 # CSV.write("output/FileName.csv",  DataFrame(A), writeheader=false)
@@ -219,11 +220,11 @@ sensitivity = [DataFrame(
 ) for thread in 1:Threads.nthreads()]
 
 incursionpoints1 = (
-  Melbourne = (-37.805896, 144.959527), 
-  Sydney = (-33.839943, 151.006101), 
-  Adelaide = (-34.901608, 138.601547), 
-  Hobart = (-42.881742, 147.323879), 
-  Brisbane = (-27.43619, 152.990588), 
+  Melbourne = (-37.805896, 144.959527),
+  Sydney = (-33.839943, 151.006101),
+  Adelaide = (-34.901608, 138.601547),
+  Hobart = (-42.881742, 147.323879),
+  Brisbane = (-27.43619, 152.990588),
   Perth = (-31.9505, 115.8605)
 )
 
